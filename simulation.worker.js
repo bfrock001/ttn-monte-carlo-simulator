@@ -661,13 +661,42 @@ function aggregate(ctx) {
     return a.endingReal - b.endingReal;
   });
 
-  const pickSim = (pct) => sims[Math.min(N - 1, Math.max(0, Math.floor((pct / 100) * (N - 1))))];
+  const pickFrom = (arr) => (pct) =>
+    arr[Math.min(N - 1, Math.max(0, Math.floor((pct / 100) * (N - 1))))];
+
+  // Nominal-ranked representatives — used by the table's
+  // ending_balance_nominal row AND the chart in nominal mode.
+  const pickSimNom = pickFrom(sims);
   const chosen = {
-    p10: pickSim(10),
-    p25: pickSim(25),
-    p50: pickSim(50),
-    p75: pickSim(75),
-    p90: pickSim(90),
+    p10: pickSimNom(10),
+    p25: pickSimNom(25),
+    p50: pickSimNom(50),
+    p75: pickSimNom(75),
+    p90: pickSimNom(90),
+  };
+
+  // Real-ranked representatives — used by the chart in real mode so that the
+  // ending point of each percentile line matches the table's
+  // ending_balance_real row (which is computed by independent ranking on
+  // endingReal). Without this second sort, the real-mode line endings come
+  // from sims chosen by NOMINAL ranking and can drift away from the table's
+  // real-balance percentile values.
+  const simsByReal = sims.slice().sort((a, b) => {
+    if (a.endingReal !== b.endingReal) return a.endingReal - b.endingReal;
+    if (a.depleted && b.depleted) {
+      return (a.depletionYear || 0) - (b.depletionYear || 0);
+    }
+    if (a.depleted && !b.depleted) return -1;
+    if (!a.depleted && b.depleted) return 1;
+    return a.endingNominal - b.endingNominal;
+  });
+  const pickSimReal = pickFrom(simsByReal);
+  const chosenReal = {
+    p10: pickSimReal(10),
+    p25: pickSimReal(25),
+    p50: pickSimReal(50),
+    p75: pickSimReal(75),
+    p90: pickSimReal(90),
   };
 
   const extractPath = (sim, useReal) => {
@@ -684,11 +713,11 @@ function aggregate(ctx) {
     p50: extractPath(chosen.p50, false),
     p75: extractPath(chosen.p75, false),
     p90: extractPath(chosen.p90, false),
-    real_p10: extractPath(chosen.p10, true),
-    real_p25: extractPath(chosen.p25, true),
-    real_p50: extractPath(chosen.p50, true),
-    real_p75: extractPath(chosen.p75, true),
-    real_p90: extractPath(chosen.p90, true),
+    real_p10: extractPath(chosenReal.p10, true),
+    real_p25: extractPath(chosenReal.p25, true),
+    real_p50: extractPath(chosenReal.p50, true),
+    real_p75: extractPath(chosenReal.p75, true),
+    real_p90: extractPath(chosenReal.p90, true),
   };
 
   // --- Per-metric independent percentile ranking.
