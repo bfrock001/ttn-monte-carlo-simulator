@@ -711,11 +711,12 @@ function aggregate(ctx) {
     return a.endingReal - b.endingReal;
   });
 
+  // Nominal-ranked representatives — used by the table's depleted? and
+  // depletion_year rows (those metrics meaningfully belong to a specific
+  // representative sim, not an independent percentile, since "depleted at the
+  // 10th percentile" only makes sense if it's a single coherent outcome).
   const pickFrom = (arr) => (pct) =>
     arr[Math.min(N - 1, Math.max(0, Math.floor((pct / 100) * (N - 1))))];
-
-  // Nominal-ranked representatives — used by the table's
-  // ending_balance_nominal row AND the chart in nominal mode.
   const pickSimNom = pickFrom(sims);
   const chosen = {
     p10: pickSimNom(10),
@@ -725,50 +726,56 @@ function aggregate(ctx) {
     p90: pickSimNom(90),
   };
 
-  // Real-ranked representatives — used by the chart in real mode so that the
-  // ending point of each percentile line matches the table's
-  // ending_balance_real row (which is computed by independent ranking on
-  // endingReal). Without this second sort, the real-mode line endings come
-  // from sims chosen by NOMINAL ranking and can drift away from the table's
-  // real-balance percentile values.
-  const simsByReal = sims.slice().sort((a, b) => {
-    if (a.endingReal !== b.endingReal) return a.endingReal - b.endingReal;
-    if (a.depleted && b.depleted) {
-      return (a.depletionYear || 0) - (b.depletionYear || 0);
-    }
-    if (a.depleted && !b.depleted) return -1;
-    if (!a.depleted && b.depleted) return 1;
-    return a.endingNominal - b.endingNominal;
-  });
-  const pickSimReal = pickFrom(simsByReal);
-  const chosenReal = {
-    p10: pickSimReal(10),
-    p25: pickSimReal(25),
-    p50: pickSimReal(50),
-    p75: pickSimReal(75),
-    p90: pickSimReal(90),
-  };
-
-  const extractPath = (sim, useReal) => {
-    const src = useReal ? realBalances : nominalBalances;
-    const base = sim.idx * (Y + 1);
-    const out = new Array(Y + 1);
-    for (let t = 0; t <= Y; t++) out[t] = src[base + t];
-    return out;
-  };
-
+  // Per-year percentile bands for the portfolio fan chart.
+  //
+  // For each year y, sort the balances of all N sims at that year and pick
+  // p10/p25/p50/p75/p90. This is the standard Monte Carlo presentation:
+  //
+  //   • Monotonic by construction every year (p10 ≤ p25 ≤ p50 ≤ p75 ≤ p90),
+  //     so the median can never plot below the 10th-percentile line.
+  //   • Smooth — each band's year-to-year movement reflects the underlying
+  //     stochastic process averaged across 10K sims, not the volatility of a
+  //     single bootstrap path.
+  //   • The endpoint at year Y still matches the table's ending-balance rows:
+  //     balances at year Y equal endingNominal / endingReal exactly (depleted
+  //     sims are zero-filled), so percentileOf(year-Y slice) ≡ percentileOf(endings).
+  //
+  // Replaces an earlier model that extracted full paths from single
+  // representative sims, which caused lines to cross mid-period because the
+  // p10-by-ending sim and the p50-by-ending sim each had their own bootstrap
+  // sequence and could cross year-by-year.
   const percentile_paths = {
-    p10: extractPath(chosen.p10, false),
-    p25: extractPath(chosen.p25, false),
-    p50: extractPath(chosen.p50, false),
-    p75: extractPath(chosen.p75, false),
-    p90: extractPath(chosen.p90, false),
-    real_p10: extractPath(chosenReal.p10, true),
-    real_p25: extractPath(chosenReal.p25, true),
-    real_p50: extractPath(chosenReal.p50, true),
-    real_p75: extractPath(chosenReal.p75, true),
-    real_p90: extractPath(chosenReal.p90, true),
+    p10: new Array(Y + 1), p25: new Array(Y + 1), p50: new Array(Y + 1),
+    p75: new Array(Y + 1), p90: new Array(Y + 1),
+    real_p10: new Array(Y + 1), real_p25: new Array(Y + 1), real_p50: new Array(Y + 1),
+    real_p75: new Array(Y + 1), real_p90: new Array(Y + 1),
   };
+  const yearSliceNom  = new Float64Array(N);
+  const yearSliceReal = new Float64Array(N);
+  const pctIdx10 = Math.min(N - 1, Math.max(0, Math.floor(0.10 * (N - 1))));
+  const pctIdx25 = Math.min(N - 1, Math.max(0, Math.floor(0.25 * (N - 1))));
+  const pctIdx50 = Math.min(N - 1, Math.max(0, Math.floor(0.50 * (N - 1))));
+  const pctIdx75 = Math.min(N - 1, Math.max(0, Math.floor(0.75 * (N - 1))));
+  const pctIdx90 = Math.min(N - 1, Math.max(0, Math.floor(0.90 * (N - 1))));
+  for (let y = 0; y <= Y; y++) {
+    for (let s = 0; s < N; s++) {
+      yearSliceNom[s]  = nominalBalances[s * (Y + 1) + y];
+      yearSliceReal[s] = realBalances[s * (Y + 1) + y];
+    }
+    // Float64Array.sort() defaults to numeric ascending — no comparator needed.
+    const sortedNom  = yearSliceNom.slice().sort();
+    const sortedReal = yearSliceReal.slice().sort();
+    percentile_paths.p10[y]      = sortedNom[pctIdx10];
+    percentile_paths.p25[y]      = sortedNom[pctIdx25];
+    percentile_paths.p50[y]      = sortedNom[pctIdx50];
+    percentile_paths.p75[y]      = sortedNom[pctIdx75];
+    percentile_paths.p90[y]      = sortedNom[pctIdx90];
+    percentile_paths.real_p10[y] = sortedReal[pctIdx10];
+    percentile_paths.real_p25[y] = sortedReal[pctIdx25];
+    percentile_paths.real_p50[y] = sortedReal[pctIdx50];
+    percentile_paths.real_p75[y] = sortedReal[pctIdx75];
+    percentile_paths.real_p90[y] = sortedReal[pctIdx90];
+  }
 
   // --- Per-metric independent percentile ranking.
   //
