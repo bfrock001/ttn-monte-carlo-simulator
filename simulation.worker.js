@@ -255,12 +255,17 @@ function runOneSim(ctx) {
   const allocCount = inputs.allocations.length;
 
   // --- Per-sim strategy state (v1.1 + v1.2)
-  let current_withdrawal_nominal = 0; // gross expense target this year (used by all strategies; carry-forward only for AS)
+  let current_withdrawal_nominal = 0; // gross expense target this year (used by all strategies; carry-forward for AS + G-K)
   let prior_year_portfolio_return = null;
   let sim_floor_binding_count = 0;
   // Effective inflation index for FI + G-K: cumulative inflation that does NOT
   // advance after a portfolio-loss year. Implements Rule 1 (inflation skip).
   let eff_inflation_index = 1.0;
+  // G-K real-dollar carry-forward state. Holds the post-guardrail withdrawal
+  // expressed in today's dollars. Nominal each year = gk_real_withdrawal ×
+  // eff_inflation_index. Rule 1 is baked in because eff_inflation_index doesn't
+  // advance in loss years. Bucket transitions scale this real value directly.
+  let gk_real_withdrawal = 0;
   const gkEventsForSim = (distributionStrategy === 'guyton_klinger') ? [] : null;
 
   // Helper: get the annual gross expense for year t from the bucket schedule (today's dollars)
@@ -362,10 +367,14 @@ function runOneSim(ctx) {
     //                           Bucket transitions honored.
     //      • actual_spending  — carry-forward: previous × (1 + (inflation − real_decline)).
     //                           Floor / ceiling = 50% / 150% of current bucket's inflated target.
-    //      • guyton_klinger   — bucket-driven baseline + Rule 1 inflation skip + Rule 2 guardrails.
-    //                           Each year baseline = bucket[t] × eff_inflation_index, then guardrails
-    //                           may cut/raise the current year only (no carry-forward). Upper cut
-    //                           suspended when years_remaining ≤ 15. Lower raise always active.
+    //      • guyton_klinger   — classic carry-forward with bucket-transition rebasing.
+    //                           Year 1 anchor = bucket[1] in today's $. Year t ≥ 2: start from
+    //                           prior year's real withdrawal, rebase at bucket transitions by
+    //                           (new_bucket / old_bucket), apply Rule 1 inflation via
+    //                           eff_inflation_index (no advance after a loss year), then apply
+    //                           Rule 2 guardrails. Post-guardrail value carries forward.
+    //                           Upper cut suspended when years_remaining ≤ 15. Lower raise
+    //                           always active.
 
     // eff_inflation_index is the cumulative inflation through year t-1 with skipped
     // years deducted (Rule 1). At year 1 it equals 1.0 (today's $). End-of-year update
@@ -404,33 +413,74 @@ function runOneSim(ctx) {
         if (current_withdrawal_nominal > wdCeiling) current_withdrawal_nominal = wdCeiling;
       }
     } else if (distributionStrategy === 'guyton_klinger') {
-      // Bucket-driven baseline (Rule 1 already applied via eff_inflation_index).
-      const bucketAnnual = bucketExpenseForYear(t);
-      let baseline = inputs.inflation_adjust ? bucketAnnual * eff_inflation_index : bucketAnnual;
+      // Classic G-K with carry-forward. State is anchored in real (today's $)
+      // dollars via gk_real_withdrawal; nominal each year is real × eff_inflation_index.
+      // This automatically implements Rule 1 (no inflation after a loss year)
+      // because eff_inflation_index doesn't advance in loss years.
 
-      // Rule 2: guardrail rate check on NET portfolio draw.
-      const baseline_net = Math.max(0, baseline - income);
-      const effectiveRatePct = balance > 0 ? (baseline_net / balance) * 100 : 0;
-      const yearsRemaining = Y - t;
-      const upperActive = yearsRemaining > 15; // final-15-year exception
-      if (effectiveRatePct > upperGuardrailPct && upperActive) {
-        const oldBaseline = baseline;
-        baseline *= 1 - gkUpperAdjustmentPct / 100;
-        gkEventsForSim.push({
-          year: t, type: 'upper',
-          old_withdrawal: oldBaseline, new_withdrawal: baseline,
-          effective_rate_pct: effectiveRatePct,
-        });
-      } else if (effectiveRatePct < lowerGuardrailPct && baseline_net > 0) {
-        const oldBaseline = baseline;
-        baseline *= 1 + gkLowerAdjustmentPct / 100;
-        gkEventsForSim.push({
-          year: t, type: 'lower',
-          old_withdrawal: oldBaseline, new_withdrawal: baseline,
-          effective_rate_pct: effectiveRatePct,
-        });
+      if (t === 1) {
+        // Year-1 anchor: bucket[1] in today's $ (eff_inflation_index = 1.0 at year 1).
+        const bucket1 = bucketExpenseForYear(1);
+        gk_real_withdrawal = bucket1;
+        current_withdrawal_nominal = inputs.inflation_adjust
+          ? gk_real_withdrawal * eff_inflation_index   // = bucket1 × 1.0
+          : gk_real_withdrawal;
+        // Year 1 is the anchor — no guardrail check.
+      } else {
+        // (a) Bucket-transition rebase. Within a bucket, real value carries forward
+        //     unchanged. At a transition year, scale by (new_bucket / old_bucket) so
+        //     the user's revised real-dollar plan becomes the new baseline.
+        const thisBucketIdx = Math.min(((t - 1) / 5) | 0, inputs.buckets.length - 1);
+        const priorBucketIdx = Math.min(((t - 2) / 5) | 0, inputs.buckets.length - 1);
+        if (thisBucketIdx !== priorBucketIdx) {
+          const thisBucket = inputs.buckets[thisBucketIdx].expense || 0;
+          const priorBucket = inputs.buckets[priorBucketIdx].expense || 0;
+          if (priorBucket > 0) {
+            gk_real_withdrawal *= thisBucket / priorBucket;
+          }
+        }
+
+        // (b) Convert to nominal. eff_inflation_index already reflects Rule 1
+        //     (no advance after loss years), so multiplying by it gives the
+        //     correct "carry-forward × inflation OR carry-forward × 1.0" result
+        //     depending on whether prior year was a loss.
+        let proposed_nominal = inputs.inflation_adjust
+          ? gk_real_withdrawal * eff_inflation_index
+          : gk_real_withdrawal;
+
+        // (c) Rule 2 guardrails — check effective rate on NET portfolio draw.
+        const proposed_net = Math.max(0, proposed_nominal - income);
+        const effectiveRatePct = balance > 0 ? (proposed_net / balance) * 100 : 0;
+        const yearsRemaining = Y - t;
+        const upperActive = yearsRemaining > 15; // final-15-year exception
+        if (effectiveRatePct > upperGuardrailPct && upperActive) {
+          const oldWd = proposed_nominal;
+          proposed_nominal *= 1 - gkUpperAdjustmentPct / 100;
+          gkEventsForSim.push({
+            year: t, type: 'upper',
+            old_withdrawal: oldWd, new_withdrawal: proposed_nominal,
+            effective_rate_pct: effectiveRatePct,
+          });
+        } else if (effectiveRatePct < lowerGuardrailPct && proposed_net > 0) {
+          const oldWd = proposed_nominal;
+          proposed_nominal *= 1 + gkLowerAdjustmentPct / 100;
+          gkEventsForSim.push({
+            year: t, type: 'lower',
+            old_withdrawal: oldWd, new_withdrawal: proposed_nominal,
+            effective_rate_pct: effectiveRatePct,
+          });
+        }
+
+        // (d) Persist for next year's carry-forward. Back-convert the
+        //     post-guardrail nominal to real (today's $) so the guardrail
+        //     effect compounds into future years' growth instead of resetting.
+        current_withdrawal_nominal = proposed_nominal;
+        if (inputs.inflation_adjust && eff_inflation_index > 0) {
+          gk_real_withdrawal = proposed_nominal / eff_inflation_index;
+        } else {
+          gk_real_withdrawal = proposed_nominal;
+        }
       }
-      current_withdrawal_nominal = baseline;
     }
 
     // Year-1 initial withdrawal rate (for diagnostics — applies to all strategies).

@@ -1098,7 +1098,7 @@ function strategyBucketNote(strategy) {
     return 'Not used under Actual Spending Decline. Only Bucket 1 drives the year-1 anchor and the 50% floor / 150% ceiling references.';
   }
   if (strategy === 'guyton_klinger') {
-    return 'Used as the baseline withdrawal target for years in this bucket. Guyton-Klinger guardrails may cut or raise the current year’s withdrawal based on the effective rate.';
+    return 'Acts as a rebase point at this bucket’s transition year. Within the bucket, the prior year’s withdrawal carries forward (with Rule 1 inflation and Rule 2 guardrails). At the transition, the carry-forward value is scaled by (this bucket / prior bucket) so the rebased plan becomes the new baseline.';
   }
   return null;
 }
@@ -1567,7 +1567,7 @@ const STRATEGY_INFO_CONTENT = {
     title: 'Guyton-Klinger Guardrails',
     sections: [
       { heading: 'How it works',
-        body: 'Each year’s baseline = bucket[year] × the effective inflation index. Rule 1: if last year had a portfolio loss, the inflation raise is skipped (same mechanism as Forgo Inflation). Rule 2: compute the effective withdrawal rate = (gross expense − SS − Pension − Annuity) ÷ current portfolio. If it exceeds your upper guardrail, cut spending by the upper adjustment %. If it falls below your lower guardrail, raise by the lower adjustment %. Cuts and raises apply to the current year only — no carry-forward. The upper-guardrail cut is suspended in the final 15 years (no point cutting late in life).' },
+        body: 'Year 1 anchors at Bucket 1 in today’s dollars. Each subsequent year starts from the prior year’s actual withdrawal — cuts and raises compound forward. Rule 1: if last year had a portfolio loss, the inflation raise is skipped (same mechanism as Forgo Inflation). Rule 2: compute the effective withdrawal rate = (gross expense − SS − Pension − Annuity) ÷ current portfolio. If it exceeds your upper guardrail, cut spending by the upper adjustment %. If it falls below your lower guardrail, raise by the lower adjustment %. The cut/raise is applied to the carry-forward, so its effect persists into all future years. Buckets 2-N act as rebase points: at a bucket transition the carry-forward is scaled by (new bucket / old bucket), so the user’s revised real-dollar plan becomes the new baseline. The upper-guardrail cut is suspended in the final 15 years (no point cutting late in life).' },
       { heading: 'Best for',
         body: 'Retirees who want to maximize lifetime spending and accept occasional income adjustments. Works best when Social Security or a pension covers essential expenses — so guardrail cuts affect discretionary spending rather than basic needs.' },
       { heading: 'What it feels like',
