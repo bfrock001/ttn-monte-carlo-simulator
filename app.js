@@ -744,6 +744,7 @@ function initInputPanel() {
 
   // Event bindings
   bindInputEvents();
+  bindStrategyModal();
 
   // Initial validation pass
   refreshAllDerived();
@@ -1495,6 +1496,145 @@ const STRATEGY_DESCRIPTIONS = {
     'improved portfolio longevity.',
 };
 
+/* ============================================================
+   Strategy Info Modal — content (Batch C4)
+   ============================================================
+   Rewritten to reflect the actual implemented behavior of each strategy
+   (bucket-driven FI + G-K, bucket-1-only CD + AS, etc.) rather than the
+   original v1.2 spec text which described the pre-Phase-3 carry-forward
+   models that no longer exist in our worker.
+   ============================================================ */
+const STRATEGY_INFO_CONTENT = {
+  none: {
+    title: 'None — Use Expense Schedule',
+    sections: [
+      { heading: 'How it works',
+        body: 'Each year’s withdrawal is whatever you entered in the bucket for that year, inflated forward from today’s dollars. No strategy logic, no guardrails, no inflation skipping. The model honors your planned spending exactly as written — the simulation tells you whether the portfolio can sustain it.' },
+      { heading: 'Best for',
+        body: 'Users who want to test their own specific spending plan — including planned changes across phases (e.g. higher spending in active early retirement, lower late). The most flexible option for letting your bucket schedule drive the model literally.' },
+      { heading: 'Key trade-off',
+        body: 'No protection mechanism. If markets perform poorly early in retirement, the model still withdraws your full planned amount each year. Pure stress test of the plan as written.' },
+    ],
+  },
+  constant_dollar: {
+    title: 'Constant Dollar — Bengen 4% Rule',
+    sections: [
+      { heading: 'How it works',
+        body: 'Withdraw your Bucket 1 amount in year 1, then increase that exact dollar amount by inflation each year. No exceptions. The portfolio absorbs all market gains and losses silently. No decisions required after initial setup. Buckets 2-N are locked when this strategy is selected — only Bucket 1 drives every year’s withdrawal.' },
+      { heading: 'Best for',
+        body: 'Retirees who want total spending certainty and have Social Security or a pension covering baseline needs. Comfortable leaving money on the table in good markets. Focused on stable real purchasing power.' },
+      { heading: 'What it feels like',
+        scenarios: [
+          { type: 'steady', label: 'Steady markets', text: 'Calm and predictable. Income rises slightly each year with inflation. The couple never thinks about their strategy — it just works.' },
+          { type: 'bear',   label: 'Bear markets',   text: 'Income stays at the same real level — no panic, no decisions. But the portfolio quietly absorbs the full loss. If losses continue, the effective withdrawal rate on the shrinking portfolio climbs.' },
+          { type: 'bull',   label: 'Bull markets',   text: 'Income stays the same real level even though the portfolio jumped. Good for building a bequest; less satisfying for those who want to enjoy a strong year in their spending.' },
+        ] },
+      { heading: 'Key risk',
+        body: 'Sequence-of-returns risk. A major bear market early in retirement forces the same real withdrawal from a much smaller portfolio, dramatically increasing depletion risk if losses persist.' },
+    ],
+  },
+  forgo_inflation: {
+    title: 'Forgo Inflation Adjustment — T. Rowe Price Method',
+    sections: [
+      { heading: 'How it works',
+        body: 'Each year’s baseline withdrawal = bucket[year] × the effective inflation index. The effective inflation index advances by that year’s inflation if your portfolio gained value, but does NOT advance after a portfolio-loss year. Skipped inflation raises are permanent — the index never catches up. Bucket transitions are honored at face value (planned spending changes still happen).' },
+      { heading: 'Best for',
+        body: 'Retirees who want a paycheck-like income stream and are comfortable skipping inflation raises after a down year. Identical to Constant Dollar in positive market years — the protection only activates when needed.' },
+      { heading: 'What it feels like',
+        scenarios: [
+          { type: 'steady', label: 'Steady markets', text: 'Income rises with inflation — the protection mechanism never fires.' },
+          { type: 'bear',   label: 'Bear markets',   text: 'Next year’s income holds flat instead of rising with inflation. A modest protection — but the skipped raise compounds forward through every remaining year, preserving meaningful portfolio value.' },
+          { type: 'bull',   label: 'Bull markets',   text: 'Identical to Constant Dollar — income rises with inflation. The strategy only activates after losses.' },
+        ] },
+      { heading: 'Key advantage',
+        body: 'Each skipped raise stays invested and compounds forward. Research shows this small, repeated protection meaningfully extends portfolio longevity over a 30+ year retirement without requiring any active decision-making.' },
+    ],
+  },
+  actual_spending: {
+    title: 'Actual Spending Decline — EBRI / Blanchett Method',
+    sections: [
+      { heading: 'How it works',
+        body: 'Year 1 anchors at Bucket 1 in today’s dollars. Each subsequent year, withdrawal grows at (inflation − your selected real spending decline rate). At the default 2% real decline with 2.5% inflation, withdrawals grow only 0.5% per year in nominal terms — and decline in real terms. A floor (50% of Bucket 1’s inflated target) and ceiling (150%) guard against extreme drift. Buckets 2-N are locked under this strategy — only Bucket 1 drives the math.' },
+      { heading: 'The research behind it',
+        body: 'EBRI found that inflation-adjusted household spending declines roughly 19% from age 65 to 75, 34% from 65 to 85, and 52% from 65 to 95. David Blanchett modeled this as roughly 2% real decline per year. Morningstar 2025 research confirms this strategy supports meaningfully higher starting withdrawal rates at the same probability of success.' },
+      { heading: 'Best for',
+        body: 'Retirees who want to spend more in the active early years of retirement, with realistic acceptance that spending will naturally decline as they age. Requires honest self-assessment — the strategy assumes you genuinely will spend less at 80 than at 65.' },
+      { heading: 'Key trade-off',
+        body: 'Constant Dollar eventually catches up in nominal income — typically around age 73. But by then, spending research shows retirees’ actual needs have declined. The strategy is designed around how people actually live, not an inflation formula.' },
+    ],
+  },
+  guyton_klinger: {
+    title: 'Guyton-Klinger Guardrails',
+    sections: [
+      { heading: 'How it works',
+        body: 'Each year’s baseline = bucket[year] × the effective inflation index. Rule 1: if last year had a portfolio loss, the inflation raise is skipped (same mechanism as Forgo Inflation). Rule 2: compute the effective withdrawal rate = (gross expense − SS − Pension − Annuity) ÷ current portfolio. If it exceeds your upper guardrail, cut spending by the upper adjustment %. If it falls below your lower guardrail, raise by the lower adjustment %. Cuts and raises apply to the current year only — no carry-forward. The upper-guardrail cut is suspended in the final 15 years (no point cutting late in life).' },
+      { heading: 'Best for',
+        body: 'Retirees who want to maximize lifetime spending and accept occasional income adjustments. Works best when Social Security or a pension covers essential expenses — so guardrail cuts affect discretionary spending rather than basic needs.' },
+      { heading: 'What it feels like',
+        scenarios: [
+          { type: 'steady', label: 'Steady markets', text: 'Income rises with inflation — rate stays within the guardrail band. The couple earns significantly more than Constant Dollar with no decisions required.' },
+          { type: 'bear',   label: 'Bear markets',   text: 'Both rules may activate. Rule 1 skips the inflation raise. Rule 2 may then fire a spending cut. A meaningful income reduction — but the couple still typically earns more than Constant Dollar even after the cut.' },
+          { type: 'bull',   label: 'Bull markets',   text: 'Income rises with inflation. In a strong year the lower guardrail may fire, triggering a spending raise. Strong markets accumulate quietly until the lower threshold is reached.' },
+        ] },
+      { heading: 'Key advantage over Constant Dollar',
+        body: 'Morningstar 2025 research shows Guyton-Klinger supports significantly higher starting safe withdrawal rates than Constant Dollar at the same probability of success. Lifetime spending is higher in the median scenario despite occasional cuts.' },
+      { heading: 'Key risk',
+        is_warning: true,
+        body: 'In severe or prolonged bear markets, the upper guardrail may fire repeatedly, producing meaningful cumulative income cuts. Research shows this strategy can require cuts exceeding 40% of original income in the worst historical sequences. A minimum withdrawal floor helps protect against this.' },
+    ],
+  },
+};
+
+function buildModalContent(strategy) {
+  const content = STRATEGY_INFO_CONTENT[strategy];
+  if (!content) return;
+  document.getElementById('modal-title').textContent = content.title;
+  let html = '';
+  content.sections.forEach((section) => {
+    html += `<h3>${escapeHtml(section.heading)}</h3>`;
+    if (section.body) {
+      const cls = section.is_warning ? 'modal-warning' : '';
+      html += `<p class="${cls}">${escapeHtml(section.body)}</p>`;
+    }
+    if (section.scenarios) {
+      section.scenarios.forEach((sc) => {
+        html += `<div class="modal-scenario ${escapeHtml(sc.type)}"><span class="modal-scenario__label">${escapeHtml(sc.label)}</span><p>${escapeHtml(sc.text)}</p></div>`;
+      });
+    }
+  });
+  document.getElementById('modal-body').innerHTML = html;
+}
+
+function openStrategyModal() {
+  const strategy = document.getElementById('distribution-strategy').value;
+  buildModalContent(strategy);
+  const modal = document.getElementById('strategy-info-modal');
+  modal.hidden = false;
+  // Move focus into the modal for keyboard users
+  setTimeout(() => document.getElementById('modal-close-btn')?.focus(), 50);
+  document.addEventListener('keydown', handleModalKeydown);
+}
+
+function closeStrategyModal() {
+  document.getElementById('strategy-info-modal').hidden = true;
+  document.removeEventListener('keydown', handleModalKeydown);
+  document.getElementById('strategy-info-btn')?.focus();
+}
+
+function handleModalKeydown(e) {
+  if (e.key === 'Escape') closeStrategyModal();
+}
+
+function bindStrategyModal() {
+  document.getElementById('strategy-info-btn')?.addEventListener('click', openStrategyModal);
+  document.getElementById('modal-close-btn')?.addEventListener('click', closeStrategyModal);
+  document.getElementById('modal-close-footer-btn')?.addEventListener('click', closeStrategyModal);
+  document.getElementById('strategy-info-modal')?.addEventListener('click', (e) => {
+    // Click on the overlay background (not the panel) closes the modal
+    if (e.target.id === 'strategy-info-modal') closeStrategyModal();
+  });
+}
+
 function handleStrategyChange() {
   const strategy = document.getElementById('distribution-strategy').value;
   INPUT_STATE.distribution_strategy = strategy;
@@ -1510,6 +1650,9 @@ function handleStrategyChange() {
   if (strategy === 'actual_spending') updateActualSpendingPreview();
   if (strategy === 'guyton_klinger')  updateGKPreview();
   renderBuckets(); // re-render to add/remove bucket-2+ strategy callouts
+  // If the info modal is open, refresh its content for the new strategy
+  const modal = document.getElementById('strategy-info-modal');
+  if (modal && !modal.hidden) buildModalContent(strategy);
   refreshRunButtonState();
 }
 

@@ -675,6 +675,20 @@
     <p class="footer-source">Historical return data: Bogleheads&rsquo; Simba Backtesting Spreadsheet</p>
   </footer>
 
+  <!-- Strategy info modal -->
+  <div id="strategy-info-modal" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="modal-title" class="modal-title"></h2>
+        <button type="button" id="modal-close-btn" class="modal-close-btn" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer">
+        <button type="button" id="modal-close-footer-btn" class="btn-text">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Chart.js for the portfolio fan chart, income fan chart, and guardrail heatmap -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
