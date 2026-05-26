@@ -73,10 +73,11 @@ function runSimulation(inputs, data) {
   const N = inputs.n_simulations;
   const Y = inputs.period_years;
 
-  // Distribution strategy fields (v1.1 + v1.2).
-  // Default to 'constant_dollar' so any caller that doesn't supply these
-  // fields gets the pre-strategy behavior byte-for-byte.
-  const distributionStrategy = inputs.distribution_strategy || 'constant_dollar';
+  // Distribution strategy fields (v1.1 + v1.2 + v1.3).
+  // Default to 'none' — the pure bucket-driven expense schedule, which is what
+  // v1.0 actually did. Callers that don't supply distribution_strategy get the
+  // user's literal multi-bucket plan honored each year (no strategy logic).
+  const distributionStrategy = inputs.distribution_strategy || 'none';
   const sp = inputs.strategy_params || {};
   const minimumWithdrawalAnnual = inputs.minimum_withdrawal_annual || 0;
   const realSpendingDeclinePct = sp.real_spending_decline_pct != null ? sp.real_spending_decline_pct : 2.0;
@@ -367,7 +368,13 @@ function runOneSim(ctx) {
       eff_inflation_index *= 1 + row.inflation / 100;
     }
 
-    if (distributionStrategy === 'constant_dollar') {
+    if (distributionStrategy === 'none') {
+      // Pure bucket-driven — honor the user's expense schedule literally.
+      // Year t expense = bucket[t] (today's $) × cumulative inflation, no strategy logic.
+      // This is the v1.0 behavior preserved as an explicit option.
+      const bucketAnnual = bucketExpenseForYear(t);
+      current_withdrawal_nominal = inputs.inflation_adjust ? bucketAnnual * inflationIndex : bucketAnnual;
+    } else if (distributionStrategy === 'constant_dollar') {
       // Always use bucket 1 — buckets 2+ locked in UI for this strategy.
       const bucket1 = bucketExpenseForYear(1);
       current_withdrawal_nominal = inputs.inflation_adjust ? bucket1 * inflationIndex : bucket1;

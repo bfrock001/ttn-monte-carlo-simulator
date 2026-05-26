@@ -690,8 +690,8 @@ const DEFAULTS = {
   // Buckets — one expense per 5 years. Default first bucket is blank;
   // user must enter at least bucket 1 expense before Run enables.
   bucket1_default_expense: 0,
-  // Distribution Strategy (v1.1 + v1.2)
-  distribution_strategy: 'constant_dollar',
+  // Distribution Strategy (v1.1 + v1.2 + v1.3 "None")
+  distribution_strategy: 'none',
   minimum_withdrawal_annual: 0,
   strategy_params: {
     real_spending_decline_pct: 2.0,
@@ -1080,6 +1080,9 @@ function renderBuckets() {
 }
 
 function strategyBucketNote(strategy) {
+  if (strategy === 'none') {
+    return null; // No callout — buckets are honored literally as planned.
+  }
   if (strategy === 'constant_dollar') {
     return 'Not used under Constant Dollar. Only Bucket 1 drives every year’s withdrawal (inflation-adjusted).';
   }
@@ -1443,10 +1446,15 @@ function refreshNetDraw() {
    Distribution Strategy (v1.1 + v1.2)
    ----------------------------------------------------------- */
 const STRATEGY_DESCRIPTIONS = {
+  none:
+    'No strategy logic — each year’s withdrawal is set by your expense schedule (the bucket ' +
+    'for that year, inflated forward from today’s dollars). Use this when you want the model ' +
+    'to honor your planned spending exactly as entered. The simulation tells you whether your ' +
+    'portfolio survives that plan.',
   constant_dollar:
     'Withdraws your target expense amount each year, adjusted upward for inflation. ' +
     'Your portfolio absorbs all market gains and losses. This is the strategy assumed ' +
-    'in Bengen’s original 4% rule research.',
+    'in Bengen’s original 4% rule research. Only Bucket 1 is used (buckets 2-N are locked).',
   forgo_inflation:
     'Same as Constant Dollar, except the annual inflation raise is skipped in any year ' +
     'the portfolio lost value. The skipped raise is permanent — it does not catch up. ' +
