@@ -697,7 +697,8 @@ const DEFAULTS = {
     real_spending_decline_pct: 2.0,
     upper_guardrail_pct: 6.0,
     lower_guardrail_pct: 4.0,
-    adjustment_pct: 10.0,
+    upper_adjustment_pct: 10.0,
+    lower_adjustment_pct: 10.0,
   },
 };
 
@@ -977,9 +978,12 @@ function renderBuckets() {
   const uniform = INPUT_STATE.expenses_uniform;
 
   // Strategies that lock buckets 2-N (visually + functionally disabled):
-  // Constant Dollar uses only bucket 1. Other strategies that drive baseline
-  // from buckets keep them editable.
-  const cdLockBuckets = INPUT_STATE.distribution_strategy === 'constant_dollar';
+  // Constant Dollar uses only bucket 1. Actual Spending Decline carries forward
+  // year-over-year and uses bucket 1 alone for floor/ceiling. Strategies that
+  // drive baseline directly from buckets (None, FI, G-K) keep them editable.
+  const cdLockBuckets =
+    INPUT_STATE.distribution_strategy === 'constant_dollar' ||
+    INPUT_STATE.distribution_strategy === 'actual_spending';
 
   INPUT_STATE.buckets.forEach((bucket, idx) => {
     const startYear = idx * 5 + 1;
@@ -1090,7 +1094,7 @@ function strategyBucketNote(strategy) {
     return 'Used as the baseline withdrawal target for years in this bucket. Inflation raises are skipped in years following a portfolio loss, and skipped raises are permanent.';
   }
   if (strategy === 'actual_spending') {
-    return 'Used as a 50% floor / 150% ceiling reference for years in this bucket. Not used as the primary withdrawal target.';
+    return 'Not used under Actual Spending Decline. Only Bucket 1 drives the year-1 anchor and the 50% floor / 150% ceiling references.';
   }
   if (strategy === 'guyton_klinger') {
     return 'Used as the baseline withdrawal target for years in this bucket. Guyton-Klinger guardrails may cut or raise the current year’s withdrawal based on the effective rate.';
@@ -1167,7 +1171,8 @@ function syncSimpleInputsFromState() {
   setVal('real-spending-decline', INPUT_STATE.strategy_params.real_spending_decline_pct);
   setVal('gk-upper-guardrail',    INPUT_STATE.strategy_params.upper_guardrail_pct);
   setVal('gk-lower-guardrail',    INPUT_STATE.strategy_params.lower_guardrail_pct);
-  setVal('gk-adjustment',         INPUT_STATE.strategy_params.adjustment_pct);
+  setVal('gk-upper-adjustment',   INPUT_STATE.strategy_params.upper_adjustment_pct);
+  setVal('gk-lower-adjustment',   INPUT_STATE.strategy_params.lower_adjustment_pct);
 
   // Show/hide custom range pane
   const customWrap = document.getElementById('custom-range');
@@ -1303,9 +1308,10 @@ function bindInputEvents() {
   // Distribution Strategy
   document.getElementById('distribution-strategy')?.addEventListener('change', handleStrategyChange);
   document.getElementById('real-spending-decline')?.addEventListener('input', updateActualSpendingPreview);
-  document.getElementById('gk-upper-guardrail')?.addEventListener('input', () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
-  document.getElementById('gk-lower-guardrail')?.addEventListener('input', () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
-  document.getElementById('gk-adjustment')?.addEventListener('input',     () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
+  document.getElementById('gk-upper-guardrail')?.addEventListener('input',  () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
+  document.getElementById('gk-lower-guardrail')?.addEventListener('input',  () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
+  document.getElementById('gk-upper-adjustment')?.addEventListener('input', () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
+  document.getElementById('gk-lower-adjustment')?.addEventListener('input', () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
   const minEl = document.getElementById('minimum-withdrawal');
   if (minEl) {
     attachCurrencyHandlers(minEl, (raw) => {
@@ -1377,9 +1383,21 @@ function refreshConstrainingWarning() {
   }
   if (!worst) { el.hidden = true; el.textContent = ''; return; }
   el.hidden = false;
-  el.textContent =
-    `${worst.name} has native data starting in ${worst.native_start}. Using ${start} ` +
-    `will include reconstructed proxy data prior to ${worst.native_start}, which may affect simulation accuracy.`;
+  // Detect data-quality-override assets (TIPS): their splice_note explicitly
+  // says pre-native data was REMOVED, so the simulator does NOT use proxy data
+  // for them. Tell the truth: the sample pool is narrowed instead.
+  const note = (worst.splice_note || '').toLowerCase();
+  const proxyRemoved = note.includes('removed') || note.startsWith('real ');
+  if (proxyRemoved) {
+    el.textContent =
+      `${worst.name} has native data starting in ${worst.native_start}. ` +
+      `When ${worst.name} is in your allocation, years prior to ${worst.native_start} are excluded ` +
+      `from the bootstrap sample pool, effectively restricting the simulation to ${worst.native_start}–${period === 'custom' ? INPUT_STATE.custom_end : 2025}.`;
+  } else {
+    el.textContent =
+      `${worst.name} has native data starting in ${worst.native_start}. Using ${start} ` +
+      `will include reconstructed proxy data prior to ${worst.native_start}, which may affect simulation accuracy.`;
+  }
 }
 
 function refreshCustomRangeError() {
@@ -1513,10 +1531,12 @@ function updateActualSpendingPreview() {
 function updateGKPreview() {
   const upper = parseFloat(document.getElementById('gk-upper-guardrail').value);
   const lower = parseFloat(document.getElementById('gk-lower-guardrail').value);
-  const adj   = parseFloat(document.getElementById('gk-adjustment').value);
-  if (Number.isFinite(upper)) INPUT_STATE.strategy_params.upper_guardrail_pct = upper;
-  if (Number.isFinite(lower)) INPUT_STATE.strategy_params.lower_guardrail_pct = lower;
-  if (Number.isFinite(adj))   INPUT_STATE.strategy_params.adjustment_pct      = adj;
+  const upAdj = parseFloat(document.getElementById('gk-upper-adjustment').value);
+  const loAdj = parseFloat(document.getElementById('gk-lower-adjustment').value);
+  if (Number.isFinite(upper)) INPUT_STATE.strategy_params.upper_guardrail_pct  = upper;
+  if (Number.isFinite(lower)) INPUT_STATE.strategy_params.lower_guardrail_pct  = lower;
+  if (Number.isFinite(upAdj)) INPUT_STATE.strategy_params.upper_adjustment_pct = upAdj;
+  if (Number.isFinite(loAdj)) INPUT_STATE.strategy_params.lower_adjustment_pct = loAdj;
 
   const balance = INPUT_STATE.initial_balance;
   const expense = getBucket1AnnualExpense();
@@ -1545,14 +1565,16 @@ function updateGKPreview() {
 
 function validateGKInputs() {
   if (INPUT_STATE.distribution_strategy !== 'guyton_klinger') return true;
-  const u = INPUT_STATE.strategy_params.upper_guardrail_pct;
-  const l = INPUT_STATE.strategy_params.lower_guardrail_pct;
-  const a = INPUT_STATE.strategy_params.adjustment_pct;
+  const u  = INPUT_STATE.strategy_params.upper_guardrail_pct;
+  const l  = INPUT_STATE.strategy_params.lower_guardrail_pct;
+  const ua = INPUT_STATE.strategy_params.upper_adjustment_pct;
+  const la = INPUT_STATE.strategy_params.lower_adjustment_pct;
   let valid = true;
-  const ue = document.getElementById('gk-upper-error');
-  const le = document.getElementById('gk-lower-error');
-  const ge = document.getElementById('gk-gap-error');
-  const ae = document.getElementById('gk-adj-error');
+  const ue  = document.getElementById('gk-upper-error');
+  const le  = document.getElementById('gk-lower-error');
+  const ge  = document.getElementById('gk-gap-error');
+  const uae = document.getElementById('gk-upper-adj-error');
+  const lae = document.getElementById('gk-lower-adj-error');
   if (!Number.isFinite(u) || u < 4.0 || u > 8.0) {
     ue.textContent = 'Upper guardrail must be between 4.0% and 8.0%';
     ue.hidden = false; valid = false;
@@ -1564,10 +1586,14 @@ function validateGKInputs() {
   if (Number.isFinite(u) && Number.isFinite(l) && (u - l) < 1.0) {
     ge.hidden = false; valid = false;
   } else { ge.hidden = true; }
-  if (!Number.isFinite(a) || a < 5 || a > 20) {
-    ae.textContent = 'Adjustment must be between 5% and 20%';
-    ae.hidden = false; valid = false;
-  } else { ae.hidden = true; }
+  if (!Number.isFinite(ua) || ua < 5 || ua > 20) {
+    uae.textContent = 'Upper adjustment must be between 5% and 20%';
+    uae.hidden = false; valid = false;
+  } else { uae.hidden = true; }
+  if (!Number.isFinite(la) || la < 5 || la > 20) {
+    lae.textContent = 'Lower adjustment must be between 5% and 20%';
+    lae.hidden = false; valid = false;
+  } else { lae.hidden = true; }
   return valid;
 }
 
@@ -1603,13 +1629,15 @@ function computeValidation() {
   }
   // Guyton-Klinger param validity
   if (INPUT_STATE.distribution_strategy === 'guyton_klinger') {
-    const u = INPUT_STATE.strategy_params.upper_guardrail_pct;
-    const l = INPUT_STATE.strategy_params.lower_guardrail_pct;
-    const a = INPUT_STATE.strategy_params.adjustment_pct;
+    const u  = INPUT_STATE.strategy_params.upper_guardrail_pct;
+    const l  = INPUT_STATE.strategy_params.lower_guardrail_pct;
+    const ua = INPUT_STATE.strategy_params.upper_adjustment_pct;
+    const la = INPUT_STATE.strategy_params.lower_adjustment_pct;
     if (!Number.isFinite(u) || u < 4.0 || u > 8.0) errors.push('Upper guardrail out of range.');
     if (!Number.isFinite(l) || l < 3.0 || l > 5.5) errors.push('Lower guardrail out of range.');
     if (Number.isFinite(u) && Number.isFinite(l) && (u - l) < 1.0) errors.push('Guardrail gap < 1.0%.');
-    if (!Number.isFinite(a) || a < 5 || a > 20) errors.push('Adjustment out of range.');
+    if (!Number.isFinite(ua) || ua < 5 || ua > 20) errors.push('Upper adjustment out of range.');
+    if (!Number.isFinite(la) || la < 5 || la > 20) errors.push('Lower adjustment out of range.');
   }
   const disc = document.getElementById('disclaimer-check');
   if (!disc || !disc.checked) errors.push('Acknowledge the disclaimer.');

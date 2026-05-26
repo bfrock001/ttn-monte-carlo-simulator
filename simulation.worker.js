@@ -83,7 +83,10 @@ function runSimulation(inputs, data) {
   const realSpendingDeclinePct = sp.real_spending_decline_pct != null ? sp.real_spending_decline_pct : 2.0;
   const upperGuardrailPct      = sp.upper_guardrail_pct      != null ? sp.upper_guardrail_pct      : 6.0;
   const lowerGuardrailPct      = sp.lower_guardrail_pct      != null ? sp.lower_guardrail_pct      : 4.0;
-  const gkAdjustmentPct        = sp.adjustment_pct           != null ? sp.adjustment_pct           : 10.0;
+  // Separate cut % and raise %. Backward-compat: older callers may pass a single `adjustment_pct` — use it for both.
+  const fallbackAdjustmentPct  = sp.adjustment_pct           != null ? sp.adjustment_pct           : 10.0;
+  const gkUpperAdjustmentPct   = sp.upper_adjustment_pct     != null ? sp.upper_adjustment_pct     : fallbackAdjustmentPct;
+  const gkLowerAdjustmentPct   = sp.lower_adjustment_pct     != null ? sp.lower_adjustment_pct     : fallbackAdjustmentPct;
 
   // Per-sim storage. We need all balances & returns to compute percentiles
   // and per-sim stats. Use typed arrays for memory efficiency.
@@ -129,7 +132,8 @@ function runSimulation(inputs, data) {
       realSpendingDeclinePct,
       upperGuardrailPct,
       lowerGuardrailPct,
-      gkAdjustmentPct,
+      gkUpperAdjustmentPct,
+      gkLowerAdjustmentPct,
       allGkEvents,
       floorBindingCounts,
       withdrawalByYear,
@@ -228,7 +232,7 @@ function runOneSim(ctx) {
   const {
     simIndex, inputs, eligibleRows, sorMode, sor2008Row, Y,
     distributionStrategy, minimumWithdrawalAnnual,
-    realSpendingDeclinePct, upperGuardrailPct, lowerGuardrailPct, gkAdjustmentPct,
+    realSpendingDeclinePct, upperGuardrailPct, lowerGuardrailPct, gkUpperAdjustmentPct, gkLowerAdjustmentPct,
     allGkEvents, floorBindingCounts,
     withdrawalByYear, cumInflationIdx, initialWithdrawalRates,
     nominalBalances, realBalances, annualReturnsPct, tbillReturnsPct, inflationsPct,
@@ -391,11 +395,12 @@ function runOneSim(ctx) {
         // Carry forward with net nominal growth = inflation − real decline.
         const netGrowthRate = (row.inflation - realSpendingDeclinePct) / 100;
         current_withdrawal_nominal *= 1 + netGrowthRate;
-        // Floor / ceiling: 50% / 150% of CURRENT bucket's inflated target.
-        const bucketAnnual = bucketExpenseForYear(t);
-        const inflatedBucketTarget = inputs.inflation_adjust ? bucketAnnual * inflationIndex : bucketAnnual;
-        const wdFloor   = inflatedBucketTarget * 0.50;
-        const wdCeiling = inflatedBucketTarget * 1.50;
+        // Floor / ceiling: 50% / 150% of BUCKET 1's inflated target.
+        // (Buckets 2-N are locked in the UI for AS — only bucket 1 matters.)
+        const bucket1 = bucketExpenseForYear(1);
+        const inflatedBucket1Target = inputs.inflation_adjust ? bucket1 * inflationIndex : bucket1;
+        const wdFloor   = inflatedBucket1Target * 0.50;
+        const wdCeiling = inflatedBucket1Target * 1.50;
         if (current_withdrawal_nominal < wdFloor)   current_withdrawal_nominal = wdFloor;
         if (current_withdrawal_nominal > wdCeiling) current_withdrawal_nominal = wdCeiling;
       }
@@ -411,7 +416,7 @@ function runOneSim(ctx) {
       const upperActive = yearsRemaining > 15; // final-15-year exception
       if (effectiveRatePct > upperGuardrailPct && upperActive) {
         const oldBaseline = baseline;
-        baseline *= 1 - gkAdjustmentPct / 100;
+        baseline *= 1 - gkUpperAdjustmentPct / 100;
         gkEventsForSim.push({
           year: t, type: 'upper',
           old_withdrawal: oldBaseline, new_withdrawal: baseline,
@@ -419,7 +424,7 @@ function runOneSim(ctx) {
         });
       } else if (effectiveRatePct < lowerGuardrailPct && baseline_net > 0) {
         const oldBaseline = baseline;
-        baseline *= 1 + gkAdjustmentPct / 100;
+        baseline *= 1 + gkLowerAdjustmentPct / 100;
         gkEventsForSim.push({
           year: t, type: 'lower',
           old_withdrawal: oldBaseline, new_withdrawal: baseline,

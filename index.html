@@ -266,17 +266,27 @@
             <p id="gk-lower-error" class="field-error" hidden></p>
             <p id="gk-gap-error" class="field-error" hidden>Upper guardrail must be at least 1.0% higher than lower guardrail.</p>
 
-            <div class="field">
-              <label class="field-label" for="gk-adjustment">Guardrail Adjustment</label>
-              <div class="suffix-wrap">
-                <input type="number" id="gk-adjustment" class="num-input" min="5" max="20" step="1" value="10" />
-                <span class="suffix">%</span>
+            <div class="field-row">
+              <div class="field">
+                <label class="field-label small" for="gk-upper-adjustment">Upper Adjustment (cut)</label>
+                <div class="suffix-wrap">
+                  <input type="number" id="gk-upper-adjustment" class="num-input" min="5" max="20" step="1" value="10" />
+                  <span class="suffix">%</span>
+                </div>
               </div>
-              <p class="field-note">
-                Percentage by which spending is cut or raised when a guardrail is breached. Original Guyton-Klinger research used 10%. Enter 5 to 20.
-              </p>
-              <p id="gk-adj-error" class="field-error" hidden></p>
+              <div class="field">
+                <label class="field-label small" for="gk-lower-adjustment">Lower Adjustment (raise)</label>
+                <div class="suffix-wrap">
+                  <input type="number" id="gk-lower-adjustment" class="num-input" min="5" max="20" step="1" value="10" />
+                  <span class="suffix">%</span>
+                </div>
+              </div>
             </div>
+            <p class="field-note">
+              Percentage by which spending is cut (upper) or raised (lower) when a guardrail is breached. Original Guyton-Klinger research used 10% for both. Enter 5 to 20.
+            </p>
+            <p id="gk-upper-adj-error" class="field-error" hidden></p>
+            <p id="gk-lower-adj-error" class="field-error" hidden></p>
 
             <div class="info-box">
               <strong>i</strong>
