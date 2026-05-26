@@ -188,6 +188,112 @@
           </p>
         </section>
 
+        <!-- ----- Section: Distribution Strategy ----- -->
+        <section class="input-section">
+          <h2 class="section-title">Distribution Strategy</h2>
+          <p class="field-note">
+            Select how your annual portfolio withdrawal is calculated each year.
+            Constant Dollar treats your expense inputs as fixed real withdrawals.
+            Guardrail strategies dynamically adjust spending based on market performance.
+          </p>
+
+          <div class="field">
+            <label class="field-label" for="distribution-strategy">
+              Withdrawal Strategy
+              <button type="button" id="strategy-info-btn" class="info-icon-btn" aria-label="Learn about this withdrawal strategy">i</button>
+            </label>
+            <select id="distribution-strategy" class="select">
+              <option value="constant_dollar" selected>Constant Dollar (Bengen 4% rule)</option>
+              <option value="forgo_inflation">Forgo Inflation Adjustment (T. Rowe Price)</option>
+              <option value="actual_spending">Actual Spending Decline (EBRI / Blanchett)</option>
+              <option value="guyton_klinger">Guyton-Klinger Guardrails</option>
+            </select>
+            <p id="strategy-description" class="field-note"></p>
+          </div>
+
+          <div class="field">
+            <label class="field-label" for="minimum-withdrawal">Minimum Annual Withdrawal</label>
+            <input type="text" id="minimum-withdrawal" class="currency-input" inputmode="numeric" autocomplete="off" placeholder="$0 (no floor)" value="" />
+            <p class="field-note">
+              Optional. If your distribution strategy calculates a withdrawal below this amount, this floor will be used instead. Represents your non-negotiable baseline spending. Leave blank or $0 for no floor.
+            </p>
+            <p class="field-warning" id="minimum-withdrawal-warning" hidden>
+              A high minimum withdrawal relative to your portfolio may accelerate depletion. The simulation will deplete the portfolio rather than violate the minimum floor.
+            </p>
+          </div>
+
+          <!-- Actual Spending parameter panel -->
+          <div id="params-actual-spending" class="strategy-params" hidden>
+            <div class="field">
+              <label class="field-label" for="real-spending-decline">Annual Real Spending Decline</label>
+              <div class="suffix-wrap">
+                <input type="number" id="real-spending-decline" class="num-input" min="0.5" max="3.0" step="0.1" value="2.0" />
+                <span class="suffix">% per year</span>
+              </div>
+              <p class="field-note">
+                EBRI research shows retirees naturally reduce real spending ~2% per year. At 2.5% inflation and 2.0% decline, withdrawals grow only 0.5% per year nominally.
+              </p>
+            </div>
+
+            <div class="preview-box" id="actual-spending-preview">
+              <div class="preview-row"><span>Net annual growth</span><span id="preview-net-growth">0.5%</span></div>
+              <div class="preview-row"><span>Year 1 withdrawal</span><span id="preview-as-year1">&mdash;</span></div>
+              <div class="preview-row"><span>Year 10 (nominal / real)</span><span><span id="preview-as-year10-nominal">&mdash;</span> / <span id="preview-as-year10-real">&mdash;</span></span></div>
+              <div class="preview-row"><span>Year 20 (nominal / real)</span><span><span id="preview-as-year20-nominal">&mdash;</span> / <span id="preview-as-year20-real">&mdash;</span></span></div>
+            </div>
+          </div>
+
+          <!-- Guyton-Klinger parameter panel -->
+          <div id="params-guyton-klinger" class="strategy-params" hidden>
+            <div class="field-row">
+              <div class="field">
+                <label class="field-label small" for="gk-upper-guardrail">Upper Guardrail (cut)</label>
+                <div class="suffix-wrap">
+                  <input type="number" id="gk-upper-guardrail" class="num-input" min="4.0" max="8.0" step="0.1" value="6.0" />
+                  <span class="suffix">%</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label small" for="gk-lower-guardrail">Lower Guardrail (raise)</label>
+                <div class="suffix-wrap">
+                  <input type="number" id="gk-lower-guardrail" class="num-input" min="3.0" max="5.5" step="0.1" value="4.0" />
+                  <span class="suffix">%</span>
+                </div>
+              </div>
+            </div>
+            <p id="gk-upper-error" class="field-error" hidden></p>
+            <p id="gk-lower-error" class="field-error" hidden></p>
+            <p id="gk-gap-error" class="field-error" hidden>Upper guardrail must be at least 1.0% higher than lower guardrail.</p>
+
+            <div class="field">
+              <label class="field-label" for="gk-adjustment">Guardrail Adjustment</label>
+              <div class="suffix-wrap">
+                <input type="number" id="gk-adjustment" class="num-input" min="5" max="20" step="1" value="10" />
+                <span class="suffix">%</span>
+              </div>
+              <p class="field-note">
+                Percentage by which spending is cut or raised when a guardrail is breached. Original Guyton-Klinger research used 10%. Enter 5 to 20.
+              </p>
+              <p id="gk-adj-error" class="field-error" hidden></p>
+            </div>
+
+            <div class="info-box">
+              <strong>i</strong>
+              <p>
+                <strong>Two rules apply each year in sequence:</strong><br>
+                Rule 1 &mdash; Inflation: skip raise if portfolio lost value last year.<br>
+                Rule 2 &mdash; Guardrail: check (expense &minus; SS &minus; Pension &minus; Annuity) &divide; portfolio. If above upper, cut expense by adjustment %. If below lower, raise. Upper guardrail cut suspended in final 15 years.
+              </p>
+            </div>
+
+            <div class="preview-box">
+              <div class="preview-row"><span>Year 1 effective rate (net)</span><span id="gk-preview-rate">&mdash;</span></div>
+              <div class="preview-row"><span>Upper fires when portfolio falls to</span><span id="gk-preview-upper-portfolio">&mdash;</span></div>
+              <div class="preview-row"><span>Lower fires when portfolio grows to</span><span id="gk-preview-lower-portfolio">&mdash;</span></div>
+            </div>
+          </div>
+        </section>
+
         <!-- ----- Section: Expense Schedule ----- -->
         <section class="input-section">
           <h2 class="section-title">Expense Schedule</h2>

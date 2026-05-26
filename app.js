@@ -690,6 +690,15 @@ const DEFAULTS = {
   // Buckets — one expense per 5 years. Default first bucket is blank;
   // user must enter at least bucket 1 expense before Run enables.
   bucket1_default_expense: 0,
+  // Distribution Strategy (v1.1 + v1.2)
+  distribution_strategy: 'constant_dollar',
+  minimum_withdrawal_annual: 0,
+  strategy_params: {
+    real_spending_decline_pct: 2.0,
+    upper_guardrail_pct: 6.0,
+    lower_guardrail_pct: 4.0,
+    adjustment_pct: 10.0,
+  },
 };
 
 // Mutable working state for the form
@@ -711,6 +720,10 @@ const INPUT_STATE = {
   pension: { ...DEFAULTS.pension },
   annuity: { ...DEFAULTS.annuity },
   buckets: [], // [{ expense, manual }]
+  // Distribution Strategy
+  distribution_strategy: DEFAULTS.distribution_strategy,
+  minimum_withdrawal_annual: DEFAULTS.minimum_withdrawal_annual,
+  strategy_params: { ...DEFAULTS.strategy_params },
 };
 
 function initInputPanel() {
@@ -1045,8 +1058,33 @@ function renderBuckets() {
     }
     wrap.appendChild(input);
 
+    // Strategy callout for buckets 2+ under non-Constant strategies.
+    // Field stays editable; the callout just explains what happens.
+    if (idx > 0) {
+      const note = strategyBucketNote(INPUT_STATE.distribution_strategy);
+      if (note) {
+        const callout = document.createElement('div');
+        callout.className = 'bucket__strategy-note';
+        callout.textContent = note;
+        wrap.appendChild(callout);
+      }
+    }
+
     container.appendChild(wrap);
   });
+}
+
+function strategyBucketNote(strategy) {
+  if (strategy === 'forgo_inflation') {
+    return 'Ignored under Forgo Inflation. Bucket 1 sets the starting expense; subsequent years carry forward year-to-year and skipped inflation raises never catch up.';
+  }
+  if (strategy === 'actual_spending') {
+    return 'Used as a 50% floor / 150% ceiling reference for years in this bucket. Not used as the primary withdrawal target.';
+  }
+  if (strategy === 'guyton_klinger') {
+    return 'Ignored under Guyton-Klinger. All guardrail calculations are based on the strategy’s running expense, not this bucket’s amount.';
+  }
+  return null;
 }
 
 /* -----------------------------------------------------------
@@ -1112,9 +1150,25 @@ function syncSimpleInputsFromState() {
   setVal('annuity-start-age', INPUT_STATE.annuity.start_age);
   setChecked('annuity-cola',   INPUT_STATE.annuity.cola);
 
+  // Strategy
+  setVal('distribution-strategy', INPUT_STATE.distribution_strategy);
+  setVal('minimum-withdrawal',    INPUT_STATE.minimum_withdrawal_annual > 0 ? formatCurrency(INPUT_STATE.minimum_withdrawal_annual) : '');
+  setVal('real-spending-decline', INPUT_STATE.strategy_params.real_spending_decline_pct);
+  setVal('gk-upper-guardrail',    INPUT_STATE.strategy_params.upper_guardrail_pct);
+  setVal('gk-lower-guardrail',    INPUT_STATE.strategy_params.lower_guardrail_pct);
+  setVal('gk-adjustment',         INPUT_STATE.strategy_params.adjustment_pct);
+
   // Show/hide custom range pane
   const customWrap = document.getElementById('custom-range');
   if (customWrap) customWrap.hidden = INPUT_STATE.historical_period !== 'custom';
+
+  // Show/hide strategy parameter panels + populate description
+  const stratDesc = document.getElementById('strategy-description');
+  if (stratDesc) stratDesc.textContent = STRATEGY_DESCRIPTIONS[INPUT_STATE.distribution_strategy] || '';
+  const aspParams = document.getElementById('params-actual-spending');
+  if (aspParams) aspParams.hidden = INPUT_STATE.distribution_strategy !== 'actual_spending';
+  const gkParams = document.getElementById('params-guyton-klinger');
+  if (gkParams) gkParams.hidden = INPUT_STATE.distribution_strategy !== 'guyton_klinger';
 }
 
 /* -----------------------------------------------------------
@@ -1235,6 +1289,20 @@ function bindInputEvents() {
     refreshAllDerived();
   });
 
+  // Distribution Strategy
+  document.getElementById('distribution-strategy')?.addEventListener('change', handleStrategyChange);
+  document.getElementById('real-spending-decline')?.addEventListener('input', updateActualSpendingPreview);
+  document.getElementById('gk-upper-guardrail')?.addEventListener('input', () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
+  document.getElementById('gk-lower-guardrail')?.addEventListener('input', () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
+  document.getElementById('gk-adjustment')?.addEventListener('input',     () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
+  const minEl = document.getElementById('minimum-withdrawal');
+  if (minEl) {
+    attachCurrencyHandlers(minEl, (raw) => {
+      INPUT_STATE.minimum_withdrawal_annual = raw;
+      handleMinimumWithdrawalChange();
+    });
+  }
+
   // Disclaimer + Run + Reset
   document.getElementById('disclaimer-check')?.addEventListener('change', refreshRunButtonState);
   document.getElementById('run-sim')?.addEventListener('click', runSimulationFromInputs);
@@ -1250,6 +1318,9 @@ function refreshAllDerived() {
   refreshBalanceError();
   refreshNetDraw();
   refreshSorUi();
+  // Strategy live previews — update whenever underlying inputs (bucket 1, balance, income, ages) change.
+  if (INPUT_STATE.distribution_strategy === 'actual_spending') updateActualSpendingPreview();
+  if (INPUT_STATE.distribution_strategy === 'guyton_klinger')  updateGKPreview();
   refreshRunButtonState();
 }
 
@@ -1361,6 +1432,145 @@ function refreshNetDraw() {
 }
 
 /* -----------------------------------------------------------
+   Distribution Strategy (v1.1 + v1.2)
+   ----------------------------------------------------------- */
+const STRATEGY_DESCRIPTIONS = {
+  constant_dollar:
+    'Withdraws your target expense amount each year, adjusted upward for inflation. ' +
+    'Your portfolio absorbs all market gains and losses. This is the strategy assumed ' +
+    'in Bengen’s original 4% rule research.',
+  forgo_inflation:
+    'Same as Constant Dollar, except the annual inflation raise is skipped in any year ' +
+    'the portfolio lost value. The skipped raise is permanent — it does not catch up. ' +
+    'A small, cumulative protection that compounds over a 30+ year retirement.',
+  actual_spending:
+    'Starts at your target expense level and increases withdrawals at a reduced rate — ' +
+    'inflation minus your selected real spending decline rate. Reflects research showing ' +
+    'retirees naturally spend less as they age.',
+  guyton_klinger:
+    'Sets upper and lower withdrawal rate guardrails relative to your portfolio balance. ' +
+    'When breached, spending adjusts up or down by the adjustment percentage. Accepts ' +
+    'occasional income adjustments in exchange for higher normal-year withdrawals and ' +
+    'improved portfolio longevity.',
+};
+
+function handleStrategyChange() {
+  const strategy = document.getElementById('distribution-strategy').value;
+  INPUT_STATE.distribution_strategy = strategy;
+  document.getElementById('strategy-description').textContent = STRATEGY_DESCRIPTIONS[strategy] || '';
+  document.getElementById('params-actual-spending').hidden = strategy !== 'actual_spending';
+  document.getElementById('params-guyton-klinger').hidden = strategy !== 'guyton_klinger';
+  if (strategy === 'actual_spending') updateActualSpendingPreview();
+  if (strategy === 'guyton_klinger')  updateGKPreview();
+  renderBuckets(); // re-render to add/remove bucket-2+ strategy callouts
+  refreshRunButtonState();
+}
+
+function updateActualSpendingPreview() {
+  const decline = parseFloat(document.getElementById('real-spending-decline').value);
+  if (Number.isFinite(decline)) INPUT_STATE.strategy_params.real_spending_decline_pct = decline;
+  const r = INPUT_STATE.strategy_params.real_spending_decline_pct;
+  const assumedInflation = 2.5;
+  const netGrowth = assumedInflation - r;
+  const year1 = getBucket1AnnualExpense();
+  document.getElementById('preview-net-growth').textContent =
+    `${netGrowth.toFixed(1)}%${netGrowth < 0 ? ' (real declining)' : ''}`;
+  if (!(year1 > 0)) {
+    document.getElementById('preview-as-year1').textContent = '—';
+    document.getElementById('preview-as-year10-nominal').textContent = '—';
+    document.getElementById('preview-as-year10-real').textContent    = '—';
+    document.getElementById('preview-as-year20-nominal').textContent = '—';
+    document.getElementById('preview-as-year20-real').textContent    = '—';
+    return;
+  }
+  const y10n = year1 * Math.pow(1 + netGrowth / 100, 9);
+  const y10r = y10n / Math.pow(1 + assumedInflation / 100, 9);
+  const y20n = year1 * Math.pow(1 + netGrowth / 100, 19);
+  const y20r = y20n / Math.pow(1 + assumedInflation / 100, 19);
+  document.getElementById('preview-as-year1').textContent          = formatCurrency(year1);
+  document.getElementById('preview-as-year10-nominal').textContent = formatCurrency(y10n);
+  document.getElementById('preview-as-year10-real').textContent    = formatCurrency(y10r);
+  document.getElementById('preview-as-year20-nominal').textContent = formatCurrency(y20n);
+  document.getElementById('preview-as-year20-real').textContent    = formatCurrency(y20r);
+}
+
+function updateGKPreview() {
+  const upper = parseFloat(document.getElementById('gk-upper-guardrail').value);
+  const lower = parseFloat(document.getElementById('gk-lower-guardrail').value);
+  const adj   = parseFloat(document.getElementById('gk-adjustment').value);
+  if (Number.isFinite(upper)) INPUT_STATE.strategy_params.upper_guardrail_pct = upper;
+  if (Number.isFinite(lower)) INPUT_STATE.strategy_params.lower_guardrail_pct = lower;
+  if (Number.isFinite(adj))   INPUT_STATE.strategy_params.adjustment_pct      = adj;
+
+  const balance = INPUT_STATE.initial_balance;
+  const expense = getBucket1AnnualExpense();
+  if (!balance || !expense) {
+    document.getElementById('gk-preview-rate').textContent              = '—';
+    document.getElementById('gk-preview-upper-portfolio').textContent   = '—';
+    document.getElementById('gk-preview-lower-portfolio').textContent   = '—';
+    return;
+  }
+  // Year-1 income — only counts streams whose start age has been reached at year 1 (age = current_age + 1)
+  const age1 = INPUT_STATE.current_age + 1;
+  let income = 0;
+  if (INPUT_STATE.ss.amount      > 0 && age1 >= INPUT_STATE.ss.start_age)      income += INPUT_STATE.ss.amount;
+  if (INPUT_STATE.pension.amount > 0 && age1 >= INPUT_STATE.pension.start_age) income += INPUT_STATE.pension.amount;
+  if (INPUT_STATE.annuity.amount > 0 && age1 >= INPUT_STATE.annuity.start_age) income += INPUT_STATE.annuity.amount;
+  const net = Math.max(0, expense - income);
+  const u = INPUT_STATE.strategy_params.upper_guardrail_pct;
+  const l = INPUT_STATE.strategy_params.lower_guardrail_pct;
+  document.getElementById('gk-preview-rate').textContent =
+    ((net / balance) * 100).toFixed(2) + '%';
+  document.getElementById('gk-preview-upper-portfolio').textContent =
+    u > 0 ? formatCurrency(net / (u / 100)) : '—';
+  document.getElementById('gk-preview-lower-portfolio').textContent =
+    l > 0 ? formatCurrency(net / (l / 100)) : '—';
+}
+
+function validateGKInputs() {
+  if (INPUT_STATE.distribution_strategy !== 'guyton_klinger') return true;
+  const u = INPUT_STATE.strategy_params.upper_guardrail_pct;
+  const l = INPUT_STATE.strategy_params.lower_guardrail_pct;
+  const a = INPUT_STATE.strategy_params.adjustment_pct;
+  let valid = true;
+  const ue = document.getElementById('gk-upper-error');
+  const le = document.getElementById('gk-lower-error');
+  const ge = document.getElementById('gk-gap-error');
+  const ae = document.getElementById('gk-adj-error');
+  if (!Number.isFinite(u) || u < 4.0 || u > 8.0) {
+    ue.textContent = 'Upper guardrail must be between 4.0% and 8.0%';
+    ue.hidden = false; valid = false;
+  } else { ue.hidden = true; }
+  if (!Number.isFinite(l) || l < 3.0 || l > 5.5) {
+    le.textContent = 'Lower guardrail must be between 3.0% and 5.5%';
+    le.hidden = false; valid = false;
+  } else { le.hidden = true; }
+  if (Number.isFinite(u) && Number.isFinite(l) && (u - l) < 1.0) {
+    ge.hidden = false; valid = false;
+  } else { ge.hidden = true; }
+  if (!Number.isFinite(a) || a < 5 || a > 20) {
+    ae.textContent = 'Adjustment must be between 5% and 20%';
+    ae.hidden = false; valid = false;
+  } else { ae.hidden = true; }
+  return valid;
+}
+
+function handleMinimumWithdrawalChange() {
+  // currency-input already has attachCurrencyHandlers; this fires on blur after parse.
+  const bucket1 = getBucket1AnnualExpense();
+  const min = INPUT_STATE.minimum_withdrawal_annual;
+  document.getElementById('minimum-withdrawal-warning').hidden =
+    !(bucket1 > 0 && min > bucket1 * 0.5);
+  refreshRunButtonState();
+}
+
+function getBucket1AnnualExpense() {
+  const b = INPUT_STATE.buckets[0];
+  if (!b || !(b.expense > 0)) return 0;
+  return b.expense; // INPUT_STATE.buckets[i].expense is always stored as annual (monthly converted at edit time)
+}
+
+/* -----------------------------------------------------------
    Validation
    ----------------------------------------------------------- */
 function computeValidation() {
@@ -1374,6 +1584,16 @@ function computeValidation() {
   if (!INPUT_STATE.buckets[0] || !(INPUT_STATE.buckets[0].expense > 0)) errors.push('Enter Bucket 1 expense.');
   if (INPUT_STATE.historical_period === 'custom') {
     if (INPUT_STATE.custom_end - INPUT_STATE.custom_start < 5) errors.push('Custom range too short.');
+  }
+  // Guyton-Klinger param validity
+  if (INPUT_STATE.distribution_strategy === 'guyton_klinger') {
+    const u = INPUT_STATE.strategy_params.upper_guardrail_pct;
+    const l = INPUT_STATE.strategy_params.lower_guardrail_pct;
+    const a = INPUT_STATE.strategy_params.adjustment_pct;
+    if (!Number.isFinite(u) || u < 4.0 || u > 8.0) errors.push('Upper guardrail out of range.');
+    if (!Number.isFinite(l) || l < 3.0 || l > 5.5) errors.push('Lower guardrail out of range.');
+    if (Number.isFinite(u) && Number.isFinite(l) && (u - l) < 1.0) errors.push('Guardrail gap < 1.0%.');
+    if (!Number.isFinite(a) || a < 5 || a > 20) errors.push('Adjustment out of range.');
   }
   const disc = document.getElementById('disclaimer-check');
   if (!disc || !disc.checked) errors.push('Acknowledge the disclaimer.');
@@ -1425,6 +1645,10 @@ function runSimulationFromInputs() {
     pension: { ...INPUT_STATE.pension },
     annuity: { ...INPUT_STATE.annuity },
     buckets: INPUT_STATE.buckets.map((b) => ({ expense: b.expense || 0 })),
+    // Distribution Strategy (v1.1 + v1.2)
+    distribution_strategy:     INPUT_STATE.distribution_strategy,
+    minimum_withdrawal_annual: INPUT_STATE.minimum_withdrawal_annual,
+    strategy_params:           { ...INPUT_STATE.strategy_params },
   };
 
   WORKER.busy = true;
@@ -1462,6 +1686,10 @@ function resetToDefaults() {
   INPUT_STATE.pension = { ...DEFAULTS.pension };
   INPUT_STATE.annuity = { ...DEFAULTS.annuity };
   INPUT_STATE.buckets = buildBucketsArray(INPUT_STATE.period_years, null);
+  // Distribution Strategy
+  INPUT_STATE.distribution_strategy   = DEFAULTS.distribution_strategy;
+  INPUT_STATE.minimum_withdrawal_annual = DEFAULTS.minimum_withdrawal_annual;
+  INPUT_STATE.strategy_params         = { ...DEFAULTS.strategy_params };
 
   // Re-render
   renderAllocationRows();
