@@ -531,6 +531,64 @@
             </p>
           </div>
 
+          <!-- ===== Income Variability Report (C3) ===== -->
+          <section id="income-variability-report" class="ivr-section">
+            <h2 class="ivr-section__title">Income Variability Report</h2>
+            <p id="ivr-subheader" class="ivr-section__subhead"></p>
+
+            <!-- Income summary cards -->
+            <div id="income-summary-cards" class="ivr-cards"></div>
+
+            <!-- Income fan chart -->
+            <div class="chart-card">
+              <div class="chart-card__head">
+                <h3 class="chart-card__title" id="income-chart-title">Projected Annual Income</h3>
+                <div class="chart-toggle" role="tablist" aria-label="Display mode">
+                  <button class="chart-toggle__btn is-active" role="tab" data-chart="income" data-mode="nominal" aria-selected="true">Nominal</button>
+                  <button class="chart-toggle__btn"           role="tab" data-chart="income" data-mode="real"    aria-selected="false">Real (inflation-adjusted)</button>
+                </div>
+              </div>
+              <div class="chart-container">
+                <canvas id="income-fan-chart"></canvas>
+              </div>
+            </div>
+
+            <!-- Guardrail heatmap (G-K only) -->
+            <div id="guardrail-heatmap-card" class="chart-card" hidden>
+              <div class="chart-card__head">
+                <h3 class="chart-card__title">Guardrail Activity by Simulation Year</h3>
+              </div>
+              <p class="chart-card__intro">
+                Red bars: % of simulations with a spending cut (upper guardrail) that year. Green bars: % with a spending raise (lower guardrail). Taller red bars early indicate years when poor markets most commonly triggered cuts.
+              </p>
+              <div class="chart-container" style="height: 280px;">
+                <canvas id="guardrail-heatmap-chart"></canvas>
+              </div>
+            </div>
+
+            <!-- G-K stats table (G-K only) -->
+            <div id="gk-stats-card" class="results-table-card" hidden>
+              <h3 class="results-table-card__title">Guyton-Klinger Statistics</h3>
+              <div class="table-wrap">
+                <table class="results-table" id="gk-stats-table">
+                  <thead>
+                    <tr>
+                      <th>Metric</th>
+                      <th class="num">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <p class="results-table-card__note">
+                Total lifetime income is the sum of all annual withdrawals across the simulation period.
+              </p>
+            </div>
+
+            <!-- Strategy callout text -->
+            <div id="ivr-callout" class="ivr-callout"></div>
+          </section>
+
           <!-- ===== Diagnostics ===== -->
           <div class="diagnostics-card">
             <h3 class="diagnostics-card__title">Diagnostics</h3>

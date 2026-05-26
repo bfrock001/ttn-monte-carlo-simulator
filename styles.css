@@ -1535,6 +1535,93 @@ em { font-style: italic; }
 }
 
 /* ============================================================
+   Income Variability Report (Batch C3)
+   ============================================================ */
+.ivr-section {
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid var(--rule);
+}
+.ivr-section__title {
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+.ivr-section__subhead {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 16px;
+  color: var(--soft);
+  margin: 0 0 22px;
+  line-height: 1.5;
+}
+
+/* Income summary metric cards */
+.ivr-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin-bottom: 22px;
+}
+.ivr-card {
+  background: var(--paper);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ivr-card__label {
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+.ivr-card__value {
+  font-family: var(--font-serif);
+  font-size: 24px;
+  line-height: 1.05;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.ivr-card__sub {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+.chart-card__intro {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--soft);
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+/* IVR strategy callout — info-box style with strategy-specific tone */
+.ivr-callout {
+  background: rgba(31, 61, 107, 0.06);
+  border-left: 3px solid var(--navy);
+  padding: 14px 18px;
+  margin-top: 18px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.ivr-callout strong {
+  font-weight: 600;
+}
+
+/* ============================================================
    Results display (legacy dev styling, mostly unused now)
    ============================================================ */
 .dev-progress {

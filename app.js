@@ -2035,6 +2035,341 @@ function renderResultsSummaryText(results) {
   el.innerHTML = html;
 }
 
+/* ============================================================
+   Income Variability Report (Batch C3)
+   ============================================================ */
+let incomeFanChart = null;
+let guardrailHeatmapChart = null;
+let currentIncomeMode = 'nominal';
+
+function renderIncomeVariabilityReport(results) {
+  const strategy = INPUT_STATE.distribution_strategy;
+  renderIVRSubheader(strategy);
+  renderIncomeFanChart(results, currentIncomeMode);
+  bindIncomeChartToggle();
+  renderIncomeSummaryCards(results);
+  // G-K specific:
+  const isGK = strategy === 'guyton_klinger' && results.gk_statistics;
+  document.getElementById('guardrail-heatmap-card').hidden = !isGK;
+  document.getElementById('gk-stats-card').hidden = !isGK;
+  if (isGK) {
+    renderGuardrailHeatmap(results);
+    renderGKStatsTable(results);
+  } else {
+    if (guardrailHeatmapChart) { guardrailHeatmapChart.destroy(); guardrailHeatmapChart = null; }
+  }
+  renderIVRCallout(results);
+}
+
+function renderIVRSubheader(strategy) {
+  const el = document.getElementById('ivr-subheader');
+  if (!el) return;
+  const subheaders = {
+    none:            'With None (Use Expense Schedule), income tracks your plan literally — each year’s bucket value, inflated forward.',
+    constant_dollar: 'With Constant Dollar, income is fully predictable — Bucket 1 inflated each year. The chart shows the resulting nominal/real path.',
+    forgo_inflation: 'With Forgo Inflation Adjustment, income is nearly stable but permanently behind inflation after every loss year.',
+    actual_spending: 'With Actual Spending Decline, income grows slowly nominally and declines in real terms — matching how retirees actually spend.',
+    guyton_klinger:  'With Guyton-Klinger Guardrails, income varies based on market performance. The chart shows the full range of annual withdrawal outcomes.',
+  };
+  el.textContent = subheaders[strategy] || '';
+}
+
+function renderIncomeFanChart(results, mode) {
+  const canvas = document.getElementById('income-fan-chart');
+  if (!canvas || typeof Chart === 'undefined') return;
+  if (incomeFanChart) { incomeFanChart.destroy(); incomeFanChart = null; }
+
+  const sa = results.inputs_summary.start_age;
+  const py = results.inputs_summary.period_years;
+  const sims = results.inputs_summary.n_simulations;
+  const paths = results.income_percentile_paths;
+  const year1 = results.year1_withdrawal_nominal;
+  const strategy = INPUT_STATE.distribution_strategy;
+
+  // Income arrays are length period_years (one value per year, year 1 .. year Y).
+  const labels = [];
+  for (let i = 0; i < py; i++) labels.push(sa + i + 1);
+
+  const NAVY    = '#1F3D6B';
+  const NAVY_15 = 'rgba(31, 61, 107, 0.13)';
+  const NAVY_25 = 'rgba(31, 61, 107, 0.22)';
+  const GOLD    = '#B58820';
+  const CLAY    = '#C84A30';
+  const INK     = '#14181E';
+
+  const p = (key) => mode === 'real' ? paths[`real_${key}`] : paths[key];
+  // Whether to show filled bands: skip for near-deterministic strategies (None / CD)
+  // where all percentiles overlap closely.
+  const showBands = strategy === 'actual_spending' || strategy === 'guyton_klinger' || strategy === 'forgo_inflation';
+
+  const datasets = [];
+  if (showBands) {
+    datasets.push(
+      { label: '_p10', data: p('p10'), borderColor: 'transparent', backgroundColor: NAVY_15, pointRadius: 0, fill: false, tension: 0.2 },
+      { label: '10–90% range', data: p('p90'), borderColor: 'transparent', backgroundColor: NAVY_15, pointRadius: 0, fill: 0, tension: 0.2 },
+      { label: '_p25', data: p('p25'), borderColor: 'transparent', backgroundColor: NAVY_25, pointRadius: 0, fill: false, tension: 0.2 },
+      { label: '25–75% range', data: p('p75'), borderColor: 'transparent', backgroundColor: NAVY_25, pointRadius: 0, fill: 2, tension: 0.2 },
+    );
+  }
+  datasets.push({
+    label: 'Median (50th)', data: p('p50'),
+    borderColor: NAVY, backgroundColor: 'transparent',
+    borderWidth: 2.5, pointRadius: 0, fill: false, tension: 0.2,
+  });
+  // Year 1 reference line (gold dashed)
+  datasets.push({
+    label: `Year 1 (${fmtCurrencyShort(year1)})`,
+    data: labels.map(() => year1),
+    borderColor: GOLD, backgroundColor: 'transparent',
+    borderWidth: 1, borderDash: [6, 4], pointRadius: 0, fill: false,
+  });
+  // G-K first-cut reference line (amber dashed)
+  if (strategy === 'guyton_klinger') {
+    const adj = INPUT_STATE.strategy_params.upper_adjustment_pct || 10;
+    const firstCutLevel = year1 * (1 - adj / 100);
+    datasets.push({
+      label: `Cut reference (−${adj.toFixed(0)}% from Year 1)`,
+      data: labels.map(() => firstCutLevel),
+      borderColor: CLAY, backgroundColor: 'transparent',
+      borderWidth: 1, borderDash: [3, 3], pointRadius: 0, fill: false,
+    });
+  }
+
+  incomeFanChart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            filter: (item) => !item.text.startsWith('_'),
+            font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11 },
+            color: INK, boxWidth: 22, boxHeight: 10, padding: 14,
+          },
+        },
+        tooltip: {
+          callbacks: {
+            title: (items) => `Age ${items[0].label}`,
+            label: (ctx) => ctx.dataset.label.startsWith('_') ? null
+              : `${ctx.dataset.label}: ${fmtCurrencyShort(ctx.parsed.y)}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Age', color: INK, font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11, weight: '700' } },
+          ticks: {
+            callback: (_, i) => i % 5 === 0 ? labels[i] : '',
+            maxRotation: 0, color: INK,
+            font: { family: "'IBM Plex Mono', ui-monospace, monospace", size: 11 },
+          },
+          grid: { color: 'rgba(20,24,30,0.05)' },
+        },
+        y: {
+          min: 0,
+          title: {
+            display: true,
+            text: mode === 'real' ? 'Annual Withdrawal (Real, today’s $)' : 'Annual Withdrawal (Nominal)',
+            color: INK, font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11, weight: '700' },
+          },
+          ticks: { callback: (v) => fmtCurrencyShort(v), color: INK, font: { family: "'IBM Plex Mono', ui-monospace, monospace", size: 11 } },
+          grid: { color: 'rgba(20,24,30,0.10)' },
+        },
+      },
+    },
+  });
+
+  const titleEl = document.getElementById('income-chart-title');
+  if (titleEl) titleEl.textContent = `Projected Annual Income — ${sims.toLocaleString('en-US')} Simulations`;
+}
+
+function bindIncomeChartToggle() {
+  document.querySelectorAll('[data-chart="income"]').forEach((btn) => {
+    if (btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      if (mode === currentIncomeMode) return;
+      currentIncomeMode = mode;
+      document.querySelectorAll('[data-chart="income"]').forEach((b) => {
+        const active = b === btn;
+        b.classList.toggle('is-active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (lastResults) renderIncomeFanChart(lastResults, mode);
+    });
+  });
+}
+
+function renderGuardrailHeatmap(results) {
+  const canvas = document.getElementById('guardrail-heatmap-chart');
+  if (!canvas || typeof Chart === 'undefined' || !results.gk_statistics) return;
+  if (guardrailHeatmapChart) { guardrailHeatmapChart.destroy(); guardrailHeatmapChart = null; }
+
+  const gk = results.gk_statistics;
+  const py = results.inputs_summary.period_years;
+  const sa = results.inputs_summary.start_age;
+  const labels = [];
+  for (let i = 0; i < py; i++) labels.push(sa + i + 1);
+
+  const CLAY = '#C84A30';
+  const TEAL = '#1A6E6E';
+  const INK  = '#14181E';
+
+  guardrailHeatmapChart = new Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Upper guardrail hit (spending cut)',
+          data: gk.pct_cuts_by_year,
+          backgroundColor: 'rgba(200, 74, 48, 0.75)', borderColor: CLAY, borderWidth: 1 },
+        { label: 'Lower guardrail hit (spending raise)',
+          data: gk.pct_raises_by_year,
+          backgroundColor: 'rgba(26, 110, 110, 0.75)', borderColor: TEAL, borderWidth: 1 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11 }, color: INK, boxWidth: 22, boxHeight: 10, padding: 14 } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}% of simulations` } },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Age', color: INK, font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11, weight: '700' } },
+          ticks: { callback: (_, i) => i % 5 === 0 ? labels[i] : '', maxRotation: 0, color: INK, font: { family: "'IBM Plex Mono', ui-monospace, monospace", size: 11 } },
+          grid: { color: 'rgba(20,24,30,0.05)' },
+        },
+        y: {
+          min: 0, max: 100,
+          title: { display: true, text: '% of Simulations', color: INK, font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11, weight: '700' } },
+          ticks: { callback: (v) => v + '%', color: INK, font: { family: "'IBM Plex Mono', ui-monospace, monospace", size: 11 } },
+          grid: { color: 'rgba(20,24,30,0.10)' },
+        },
+      },
+    },
+  });
+}
+
+function renderIncomeSummaryCards(results) {
+  const container = document.getElementById('income-summary-cards');
+  if (!container) return;
+  const strategy = INPUT_STATE.distribution_strategy;
+  const inp = results.inputs_summary;
+  const sa = inp.start_age;
+  const py = inp.period_years;
+  const paths = results.income_percentile_paths;
+  const year1 = results.year1_withdrawal_nominal;
+  const endAge = sa + py;
+  const midYearIdx = Math.min(14, py - 1); // year 15 if available
+  const midAge = sa + midYearIdx + 1;
+
+  // Card 4 is strategy-specific
+  let card4Label, card4Value, card4Sub;
+  if (strategy === 'constant_dollar') {
+    card4Label = 'Real income — final year (median)';
+    card4Value = fmtCurrencyShort(paths.real_p50[py - 1]);
+    card4Sub = 'Purchasing power in today’s dollars';
+  } else if (strategy === 'forgo_inflation') {
+    card4Label = 'Real income — final year (median)';
+    card4Value = fmtCurrencyShort(paths.real_p50[py - 1]);
+    card4Sub = 'Erosion vs. Constant Dollar reflects skipped raises';
+  } else if (strategy === 'actual_spending') {
+    card4Label = 'Real income — final year (median)';
+    card4Value = fmtCurrencyShort(paths.real_p50[py - 1]);
+    card4Sub = `Declining at ~${(INPUT_STATE.strategy_params.real_spending_decline_pct || 2).toFixed(1)}%/yr by design`;
+  } else if (strategy === 'guyton_klinger' && results.gk_statistics) {
+    card4Label = 'Simulations with at least 1 cut';
+    card4Value = `${results.gk_statistics.pct_sims_with_any_cut.toFixed(1)}%`;
+    card4Sub = 'Upper guardrail triggered at least once';
+  } else {
+    card4Label = 'Real income — final year (median)';
+    card4Value = fmtCurrencyShort(paths.real_p50[py - 1]);
+    card4Sub = 'Purchasing power in today’s dollars';
+  }
+
+  container.innerHTML = '';
+  container.appendChild(ivrCard('Year 1 Withdrawal', fmtCurrencyShort(year1),
+    `${(results.year1_withdrawal_rate_pct || 0).toFixed(2)}% of starting portfolio`));
+  container.appendChild(ivrCard('Median Final Year Withdrawal', fmtCurrencyShort(paths.p50[py - 1]),
+    `Age ${endAge} · 50th percentile (nominal)`));
+  container.appendChild(ivrCard(`Income Range at Age ${midAge}`,
+    `${fmtCurrencyShort(paths.p10[midYearIdx])} – ${fmtCurrencyShort(paths.p90[midYearIdx])}`,
+    `10th to 90th percentile`));
+  container.appendChild(ivrCard(card4Label, card4Value, card4Sub));
+}
+
+function ivrCard(label, value, sub) {
+  const div = document.createElement('div');
+  div.className = 'ivr-card';
+  const l = document.createElement('div'); l.className = 'ivr-card__label'; l.textContent = label;
+  const v = document.createElement('div'); v.className = 'ivr-card__value'; v.textContent = value;
+  const s = document.createElement('div'); s.className = 'ivr-card__sub';   s.textContent = sub || '';
+  div.appendChild(l); div.appendChild(v); div.appendChild(s);
+  return div;
+}
+
+function renderGKStatsTable(results) {
+  if (!results.gk_statistics) return;
+  const tbody = document.querySelector('#gk-stats-table tbody');
+  if (!tbody) return;
+  const gk = results.gk_statistics;
+  const sa = results.inputs_summary.start_age;
+  const paths = results.income_percentile_paths;
+  const totalSum = (arr) => arr.reduce((a, b) => a + b, 0);
+  const rows = [
+    ['Simulations with at least one spending cut',  `${gk.pct_sims_with_any_cut.toFixed(1)}%`],
+    ['Simulations with at least one spending raise', `${gk.pct_sims_with_any_raise.toFixed(1)}%`],
+    ['Average spending cuts per simulation',   gk.avg_cuts_per_sim.toFixed(2)],
+    ['Average spending raises per simulation', gk.avg_raises_per_sim.toFixed(2)],
+    ['Average year of first spending cut',
+      gk.avg_year_of_first_cut != null ? `Year ${gk.avg_year_of_first_cut.toFixed(1)} (≈ Age ${Math.round(sa + gk.avg_year_of_first_cut)})` : 'No cuts occurred'],
+    ['Median year of first spending cut',
+      gk.median_year_of_first_cut != null ? `Year ${gk.median_year_of_first_cut} (Age ${sa + gk.median_year_of_first_cut})` : 'No cuts occurred'],
+    ['Median total lifetime income (nominal)', fmtCurrencyShort(totalSum(paths.p50))],
+    ['Median total lifetime income (real, today’s $)', fmtCurrencyShort(totalSum(paths.real_p50))],
+  ];
+  tbody.innerHTML = '';
+  for (const [label, val] of rows) {
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td'); td1.className = 'metric-label'; td1.textContent = label;
+    const td2 = document.createElement('td'); td2.className = 'num'; td2.textContent = val;
+    tr.appendChild(td1); tr.appendChild(td2);
+    tbody.appendChild(tr);
+  }
+}
+
+function renderIVRCallout(results) {
+  const el = document.getElementById('ivr-callout');
+  if (!el) return;
+  const strategy = INPUT_STATE.distribution_strategy;
+  const gk = results.gk_statistics;
+  const callouts = {
+    none:
+      'With None, income variance comes entirely from inflation. Portfolio success depends on whether the inflation-adjusted draws are sustainable for your selected allocation.',
+    constant_dollar:
+      'With Constant Dollar, income is fully predictable in real terms. Portfolio success rate reflects whether the fixed real withdrawal schedule depleted the portfolio.',
+    forgo_inflation:
+      'With Forgo Inflation, each skipped raise stays invested and compounds forward — preserving meaningful portfolio value over a 30+ year retirement without active decision-making.',
+    actual_spending:
+      'With Actual Spending Decline, lower late-life withdrawals preserve the portfolio. Typically produces a higher success rate than Constant Dollar at the same starting balance, with more income in the active early years.',
+    guyton_klinger:
+      gk
+        ? `Guardrail strategies trade income predictability for portfolio longevity. In these simulations, ${gk.pct_sims_with_any_cut.toFixed(1)}% of scenarios triggered at least one spending cut and ${gk.pct_sims_with_any_raise.toFixed(1)}% triggered at least one raise. Scenarios where the upper guardrail fires more frequently tend to have higher portfolio survival rates — the strategy is working as designed.`
+        : 'Guardrail strategies trade income predictability for portfolio longevity. The guardrail rules cut spending in stressed markets and raise spending in strong ones.',
+  };
+  let text = callouts[strategy] || '';
+  if (results.minimum_withdrawal_annual > 0 && results.floor_binding_percentiles) {
+    const p50bind = results.floor_binding_percentiles.p50 || 0;
+    text += ` A minimum annual withdrawal floor of ${formatCurrency(results.minimum_withdrawal_annual)} was active; in the median scenario it was binding in ${p50bind} of ${results.inputs_summary.period_years} years.`;
+  }
+  el.textContent = text;
+}
+
 function devRenderResults(results) {
   hideElement('dev-progress');
   hideElement('results-placeholder');
@@ -2047,6 +2382,7 @@ function devRenderResults(results) {
   renderPortfolioFanChart(results, currentPortfolioMode);
   bindPortfolioChartToggle();
   renderResultsSummaryText(results);
+  renderIncomeVariabilityReport(results);
 
   const elapsed = ((performance.now() - WORKER.startedAt) / 1000).toFixed(2);
 
