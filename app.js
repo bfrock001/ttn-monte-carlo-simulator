@@ -1779,9 +1779,205 @@ function devShowError(message) {
   if (wrap) wrap.hidden = false;
 }
 
+/* ============================================================
+   Phase 4 — Headline Success Rate card
+   ============================================================ */
+function renderSuccessCard(results) {
+  const sm = results.success_metrics;
+  const startAge = results.inputs_summary.start_age;
+  const pct = sm.success_rate_pct;
+  const pctEl   = document.getElementById('success-card-pct');
+  const countEl = document.getElementById('success-card-count');
+  const divEl   = document.getElementById('success-card-divider');
+  const deplEl  = document.getElementById('success-card-depletion');
+  if (!pctEl) return;
+
+  pctEl.textContent = `${pct.toFixed(1)}%`;
+  pctEl.classList.remove('is-green','is-navy','is-gold','is-clay');
+  if      (pct >= 90) pctEl.classList.add('is-green');
+  else if (pct >= 75) pctEl.classList.add('is-navy');
+  else if (pct >= 50) pctEl.classList.add('is-gold');
+  else                pctEl.classList.add('is-clay');
+
+  countEl.textContent =
+    `${sm.success_count.toLocaleString('en-US')} of ${sm.total_simulations.toLocaleString('en-US')} simulations ended with $1 or more`;
+
+  if (sm.failure_count > 0 && sm.avg_depletion_year != null && sm.median_depletion_year != null) {
+    divEl.hidden  = false;
+    deplEl.hidden = false;
+    const avgY = Math.round(sm.avg_depletion_year);
+    const avgAge = startAge + avgY;
+    const medY = sm.median_depletion_year;
+    const medAge = startAge + medY;
+    document.getElementById('depl-avg').textContent    = `Year ${avgY} (Age ${avgAge})`;
+    document.getElementById('depl-median').textContent = `Year ${medY} (Age ${medAge})`;
+  } else {
+    divEl.hidden  = true;
+    deplEl.hidden = true;
+  }
+}
+
+/* ============================================================
+   Phase 4 — Portfolio fan chart (Chart.js)
+   ============================================================ */
+let portfolioFanChart = null;
+let currentPortfolioMode = 'nominal';
+let lastResults = null;
+
+function renderPortfolioFanChart(results, mode) {
+  const canvas = document.getElementById('portfolio-fan-chart');
+  if (!canvas || typeof Chart === 'undefined') return;
+  if (portfolioFanChart) { portfolioFanChart.destroy(); portfolioFanChart = null; }
+
+  const sa = results.inputs_summary.start_age;
+  const py = results.inputs_summary.period_years;
+  const sims = results.inputs_summary.n_simulations;
+  const paths = results.percentile_paths;
+  const initial = results.inputs_summary.initial_balance;
+
+  // X-axis labels: ages from start_age to start_age + period_years (year 0 = sa, year Y = sa+py)
+  const labels = [];
+  for (let i = 0; i <= py; i++) labels.push(sa + i);
+
+  // Brand colors
+  const NAVY      = '#1F3D6B';
+  const NAVY_15   = 'rgba(31, 61, 107, 0.13)';
+  const NAVY_25   = 'rgba(31, 61, 107, 0.22)';
+  const GOLD      = '#B58820';
+  const CLAY      = '#C84A30';
+  const INK       = '#14181E';
+
+  const p = (key) => mode === 'real' ? paths[`real_${key}`] : paths[key];
+
+  // Build datasets — fan layered bottom-up so fills target the right previous dataset.
+  // Order: p10 (transparent, no fill), p90 (fill to p10 = outer band),
+  //        p25 (transparent, no fill), p75 (fill to p25 = inner band),
+  //        p50 (median solid line).
+  const datasets = [
+    { label: '_p10', data: p('p10'),
+      borderColor: 'transparent', backgroundColor: NAVY_15,
+      pointRadius: 0, fill: false, tension: 0.2 },
+    { label: '10–90% range', data: p('p90'),
+      borderColor: 'transparent', backgroundColor: NAVY_15,
+      pointRadius: 0, fill: 0, tension: 0.2 },
+    { label: '_p25', data: p('p25'),
+      borderColor: 'transparent', backgroundColor: NAVY_25,
+      pointRadius: 0, fill: false, tension: 0.2 },
+    { label: '25–75% range', data: p('p75'),
+      borderColor: 'transparent', backgroundColor: NAVY_25,
+      pointRadius: 0, fill: 2, tension: 0.2 },
+    { label: 'Median (50th)', data: p('p50'),
+      borderColor: NAVY, backgroundColor: 'transparent',
+      borderWidth: 2.5, pointRadius: 0, fill: false, tension: 0.2 },
+    // Year-0 starting balance dot — gold accent
+    { label: '_year0', data: labels.map((_, i) => i === 0 ? initial : null),
+      borderColor: 'transparent', backgroundColor: GOLD,
+      pointRadius: labels.map((_, i) => i === 0 ? 5 : 0),
+      pointBackgroundColor: GOLD, pointBorderColor: GOLD,
+      fill: false, spanGaps: false },
+    // $0 depleted line — clay dashed
+    { label: '_zero', data: labels.map(() => 0),
+      borderColor: CLAY, backgroundColor: 'transparent',
+      borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: false },
+  ];
+
+  portfolioFanChart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            filter: (item) => !item.text.startsWith('_'),
+            font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11 },
+            color: INK,
+            boxWidth: 22, boxHeight: 10, padding: 14,
+          },
+        },
+        tooltip: {
+          callbacks: {
+            title: (items) => `Age ${items[0].label}`,
+            label: (ctx) => {
+              if (ctx.dataset.label.startsWith('_')) return null;
+              return `${ctx.dataset.label}: ${fmtCurrencyShort(ctx.parsed.y)}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Age', color: INK, font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11, weight: '700' } },
+          ticks: {
+            callback: (_, i) => i % 5 === 0 ? labels[i] : '',
+            maxRotation: 0, color: INK,
+            font: { family: "'IBM Plex Mono', ui-monospace, monospace", size: 11 },
+          },
+          grid: { color: 'rgba(20,24,30,0.05)' },
+        },
+        y: {
+          min: 0,
+          title: {
+            display: true,
+            text: mode === 'real' ? 'Portfolio Balance (Real, today’s $)' : 'Portfolio Balance (Nominal)',
+            color: INK, font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11, weight: '700' },
+          },
+          ticks: {
+            callback: (v) => fmtCurrencyShort(v),
+            color: INK,
+            font: { family: "'IBM Plex Mono', ui-monospace, monospace", size: 11 },
+          },
+          grid: { color: 'rgba(20,24,30,0.10)' },
+        },
+      },
+    },
+  });
+
+  // Title + depletion note
+  const titleEl = document.getElementById('portfolio-chart-title');
+  if (titleEl) titleEl.textContent = `Projected Portfolio Balance — ${sims.toLocaleString('en-US')} Simulations`;
+  const noteEl = document.getElementById('portfolio-chart-depletion-note');
+  if (noteEl) {
+    if (results.success_metrics.failure_count > 0) {
+      noteEl.hidden = false;
+      noteEl.textContent = `${results.success_metrics.failure_count.toLocaleString('en-US')} of ${results.success_metrics.total_simulations.toLocaleString('en-US')} simulations depleted before year ${py}.`;
+    } else {
+      noteEl.hidden = true;
+    }
+  }
+}
+
+function bindPortfolioChartToggle() {
+  document.querySelectorAll('[data-chart="portfolio"]').forEach((btn) => {
+    if (btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      if (mode === currentPortfolioMode) return;
+      currentPortfolioMode = mode;
+      document.querySelectorAll('[data-chart="portfolio"]').forEach((b) => {
+        const active = b === btn;
+        b.classList.toggle('is-active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (lastResults) renderPortfolioFanChart(lastResults, mode);
+    });
+  });
+}
+
 function devRenderResults(results) {
   hideElement('dev-progress');
+  hideElement('results-placeholder');
   showElement('dev-results');
+
+  // Cache for chart toggle re-renders
+  lastResults = results;
+  // Render the new Phase-4 visuals (above the existing dev-style table)
+  renderSuccessCard(results);
+  renderPortfolioFanChart(results, currentPortfolioMode);
+  bindPortfolioChartToggle();
 
   const elapsed = ((performance.now() - WORKER.startedAt) / 1000).toFixed(2);
 

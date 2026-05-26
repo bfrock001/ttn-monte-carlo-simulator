@@ -458,6 +458,38 @@
         </div>
 
         <div id="dev-results" hidden>
+          <!-- ===== Headline Success Rate card ===== -->
+          <div id="success-card" class="success-card">
+            <div class="success-card__top">
+              <div class="success-card__label">Portfolio Success Rate</div>
+              <div class="success-card__pct" id="success-card-pct">—</div>
+              <div class="success-card__count" id="success-card-count"></div>
+            </div>
+            <div class="success-card__divider" id="success-card-divider" hidden></div>
+            <div class="success-card__depletion" id="success-card-depletion" hidden>
+              <div class="success-card__depletion-label">Among simulations that depleted</div>
+              <div class="success-card__depletion-stats">
+                <div><span>Average depletion:</span> <strong id="depl-avg">—</strong></div>
+                <div><span>Median depletion:</span> <strong id="depl-median">—</strong></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===== Portfolio Fan Chart ===== -->
+          <div class="chart-card">
+            <div class="chart-card__head">
+              <h3 class="chart-card__title" id="portfolio-chart-title">Projected Portfolio Balance</h3>
+              <div class="chart-toggle" role="tablist" aria-label="Display mode">
+                <button class="chart-toggle__btn is-active" role="tab" data-chart="portfolio" data-mode="nominal" aria-selected="true">Nominal</button>
+                <button class="chart-toggle__btn"           role="tab" data-chart="portfolio" data-mode="real"    aria-selected="false">Real (inflation-adjusted)</button>
+              </div>
+            </div>
+            <div class="chart-container">
+              <canvas id="portfolio-fan-chart"></canvas>
+            </div>
+            <p id="portfolio-chart-depletion-note" class="chart-card__note" hidden></p>
+          </div>
+
           <ul class="summary-strip dev-results-strip" id="dev-headline"></ul>
 
           <div class="dev-results-grid">
@@ -563,6 +595,9 @@
     <p class="footer-source">Historical return data: Bogleheads&rsquo; Simba Backtesting Spreadsheet</p>
   </footer>
 
+  <!-- Chart.js for the portfolio fan chart, income fan chart, and guardrail heatmap -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="app.js"></script>
 </body>
 </html>

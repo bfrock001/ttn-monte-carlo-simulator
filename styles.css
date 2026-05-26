@@ -1234,7 +1234,154 @@ em { font-style: italic; }
 }
 
 /* ============================================================
-   Results display (temporary — replaced by fan chart in Phase 4)
+   Results display — Phase 4 + Batch C
+   ============================================================ */
+
+/* Headline Success Rate card */
+.success-card {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  padding: 28px 32px;
+  margin-bottom: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.success-card__top {
+  text-align: center;
+}
+.success-card__label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--soft);
+  margin-bottom: 8px;
+}
+.success-card__pct {
+  font-family: var(--font-serif);
+  font-size: 80px;
+  line-height: 0.95;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--ink); /* overridden by .is-green/.is-navy/.is-gold/.is-clay modifiers */
+}
+.success-card__pct.is-green { color: var(--teal); }
+.success-card__pct.is-navy  { color: var(--navy); }
+.success-card__pct.is-gold  { color: var(--gold); }
+.success-card__pct.is-clay  { color: var(--clay); }
+.success-card__count {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--soft);
+  margin-top: 8px;
+  letter-spacing: 0.02em;
+}
+.success-card__divider {
+  height: 1px;
+  background: var(--rule);
+  margin: 4px 0;
+}
+.success-card__depletion {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.success-card__depletion-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--soft);
+  text-align: center;
+}
+.success-card__depletion-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 32px;
+  justify-items: center;
+}
+.success-card__depletion-stats > div {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+.success-card__depletion-stats strong {
+  color: var(--ink);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  margin-left: 6px;
+}
+
+/* Chart cards (used for portfolio fan, income fan, guardrail heatmap) */
+.chart-card {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  padding: 18px 22px 20px;
+  margin-bottom: 22px;
+}
+.chart-card__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.chart-card__title {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0;
+}
+.chart-card__note {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--faint);
+  margin: 12px 0 0;
+  letter-spacing: 0.02em;
+}
+
+.chart-container {
+  position: relative;
+  height: 360px;
+}
+
+/* Chart nominal/real toggle */
+.chart-toggle {
+  display: inline-flex;
+  background: var(--paper-alt);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 3px;
+  gap: 2px;
+}
+.chart-toggle__btn {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--soft);
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  cursor: pointer;
+  border-radius: 2px;
+  letter-spacing: 0.01em;
+  transition: background 120ms ease, color 120ms ease;
+}
+.chart-toggle__btn:hover { color: var(--ink); }
+.chart-toggle__btn.is-active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* ============================================================
+   Results display (temporary table — replaced by Section 6.4 styling in C2)
    ============================================================ */
 .dev-progress {
   background: var(--paper-alt);
