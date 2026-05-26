@@ -325,9 +325,12 @@ function runOneSim(ctx) {
       drawnStockReturn.push(row[correlationAssetKey]);
     }
 
-    // 1. Inflation index update — happens BEFORE expense lookup (today's-dollars to year-t dollars)
-    inflationIndex *= 1 + row.inflation / 100;
-    inflationsPct[annBase + (t - 1)]  = row.inflation;
+    // 1. Record THIS year's bootstrap inflation rate, and the START-of-year cumulative
+    //    inflation index (which is the cumulative inflation through year t-1; equals 1.0
+    //    at year 1). All expense/income/floor calcs below use this start-of-year value.
+    //    Year 1 expense therefore equals bucket × 1.0 = today's dollars — matching
+    //    Bengen's convention. Inflation accumulates at END of year for use in year t+1.
+    inflationsPct[annBase + (t - 1)]   = row.inflation;
     cumInflationIdx[annBase + (t - 1)] = inflationIndex;
 
     // 2. Guaranteed income (SS / pension / annuity). All amounts in today's $.
@@ -364,13 +367,9 @@ function runOneSim(ctx) {
     //                           may cut/raise the current year only (no carry-forward). Upper cut
     //                           suspended when years_remaining ≤ 15. Lower raise always active.
 
-    // Update the effective-inflation index used by FI and G-K (Rule 1).
-    //   First year: always advances (no "prior year" to be a loss).
-    //   Subsequent years: advances unless prior year had a portfolio loss.
-    const skipInflationThisYear = (t > 1 && prior_year_portfolio_return != null && prior_year_portfolio_return < 0);
-    if (!skipInflationThisYear) {
-      eff_inflation_index *= 1 + row.inflation / 100;
-    }
+    // eff_inflation_index is the cumulative inflation through year t-1 with skipped
+    // years deducted (Rule 1). At year 1 it equals 1.0 (today's $). End-of-year update
+    // below advances it by this year's inflation IF this year's return was not a loss.
 
     if (distributionStrategy === 'none') {
       // Pure bucket-driven — honor the user's expense schedule literally.
@@ -485,13 +484,21 @@ function runOneSim(ctx) {
     }
     balance = postWithdraw * (1 + weightedReturnPct / 100);
 
-    // 8. Record
+    // 8. End-of-year inflation updates. Year t's inflation now applies to year t+1's
+    //    calcs (cumulative through year t). eff advances only on non-loss years (Rule 1).
+    inflationIndex *= 1 + row.inflation / 100;
+    if (weightedReturnPct >= 0) {
+      eff_inflation_index *= 1 + row.inflation / 100;
+    }
+
+    // 9. Record balances. Real balance uses END-of-year inflation (this year's
+    //    nominal balance deflated by the cumulative inflation through year t).
     nominalBalances[balanceBase + t] = balance;
     realBalances[balanceBase + t]    = balance / inflationIndex;
     annualReturnsPct[annBase + (t - 1)] = weightedReturnPct;
     tbillReturnsPct[annBase + (t - 1)]  = row.st_tbills;
 
-    // 9. Strategy state update — carry portfolio return to next year for inflation-rule strategies.
+    // 10. Carry portfolio return to next year (still used by some legacy reference paths).
     prior_year_portfolio_return = weightedReturnPct;
   }
 

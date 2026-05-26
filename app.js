@@ -1185,6 +1185,13 @@ function syncSimpleInputsFromState() {
   if (aspParams) aspParams.hidden = INPUT_STATE.distribution_strategy !== 'actual_spending';
   const gkParams = document.getElementById('params-guyton-klinger');
   if (gkParams) gkParams.hidden = INPUT_STATE.distribution_strategy !== 'guyton_klinger';
+  // Uniform-expense toggle visibility matches strategy
+  const uniformRow = document.getElementById('uniform-expense-row');
+  if (uniformRow) {
+    uniformRow.hidden =
+      INPUT_STATE.distribution_strategy === 'constant_dollar' ||
+      INPUT_STATE.distribution_strategy === 'actual_spending';
+  }
 }
 
 /* -----------------------------------------------------------
@@ -1494,6 +1501,12 @@ function handleStrategyChange() {
   document.getElementById('strategy-description').textContent = STRATEGY_DESCRIPTIONS[strategy] || '';
   document.getElementById('params-actual-spending').hidden = strategy !== 'actual_spending';
   document.getElementById('params-guyton-klinger').hidden = strategy !== 'guyton_klinger';
+  // Hide the uniform-expense toggle for CD/AS — buckets 2-N are locked regardless
+  // for those strategies, so the toggle has no effect there.
+  const uniformRow = document.getElementById('uniform-expense-row');
+  if (uniformRow) {
+    uniformRow.hidden = (strategy === 'constant_dollar' || strategy === 'actual_spending');
+  }
   if (strategy === 'actual_spending') updateActualSpendingPreview();
   if (strategy === 'guyton_klinger')  updateGKPreview();
   renderBuckets(); // re-render to add/remove bucket-2+ strategy callouts
