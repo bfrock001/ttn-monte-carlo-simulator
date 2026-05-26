@@ -73,17 +73,6 @@ function runSimulation(inputs, data) {
   const N = inputs.n_simulations;
   const Y = inputs.period_years;
 
-  // Distribution strategy fields (v1.1 + v1.2).
-  // Default to 'constant_dollar' so any caller that doesn't supply these
-  // fields gets the pre-strategy behavior byte-for-byte.
-  const distributionStrategy = inputs.distribution_strategy || 'constant_dollar';
-  const sp = inputs.strategy_params || {};
-  const minimumWithdrawalAnnual = inputs.minimum_withdrawal_annual || 0;
-  const realSpendingDeclinePct = sp.real_spending_decline_pct != null ? sp.real_spending_decline_pct : 2.0;
-  const upperGuardrailPct      = sp.upper_guardrail_pct      != null ? sp.upper_guardrail_pct      : 6.0;
-  const lowerGuardrailPct      = sp.lower_guardrail_pct      != null ? sp.lower_guardrail_pct      : 4.0;
-  const gkAdjustmentPct        = sp.adjustment_pct           != null ? sp.adjustment_pct           : 10.0;
-
   // Per-sim storage. We need all balances & returns to compute percentiles
   // and per-sim stats. Use typed arrays for memory efficiency.
   const nominalBalances = new Float64Array(N * (Y + 1));
@@ -91,18 +80,8 @@ function runSimulation(inputs, data) {
   const annualReturnsPct  = new Float64Array(N * Y);
   const tbillReturnsPct   = new Float64Array(N * Y);
   const inflationsPct     = new Float64Array(N * Y); // per-sim per-year inflation for TWR-real
-  const cumInflationIdx   = new Float64Array(N * Y); // per-sim per-year cumulative inflation index (for real income paths)
-  const withdrawalByYear  = new Float64Array(N * Y); // per-sim per-year nominal gross withdrawal (strategy output)
   const depletedFlags   = new Uint8Array(N);
   const depletionYears  = new Int16Array(N); // 0 when not depleted; otherwise 1..Y
-  const initialWithdrawalRates = new Float64Array(N); // year-1 (proposed_withdrawal / starting_balance) * 100
-
-  // G-K event log — only populated when strategy === 'guyton_klinger'.
-  // Outer array indexed by simIndex; inner array of {year, type, old_withdrawal, new_withdrawal, effective_rate_pct}.
-  const allGkEvents = distributionStrategy === 'guyton_klinger' ? new Array(N) : null;
-
-  // Per-sim floor-binding counts (years in which minimum_withdrawal_annual overrode the strategy).
-  const floorBindingCounts = minimumWithdrawalAnnual > 0 ? new Int16Array(N) : null;
 
   // Diagnostics
   const sampledYearCounts = new Map(); // year -> count of times it was drawn (across all positions)
@@ -122,19 +101,6 @@ function runSimulation(inputs, data) {
       sorMode,
       sor2008Row,
       Y,
-      // strategy state
-      distributionStrategy,
-      minimumWithdrawalAnnual,
-      realSpendingDeclinePct,
-      upperGuardrailPct,
-      lowerGuardrailPct,
-      gkAdjustmentPct,
-      allGkEvents,
-      floorBindingCounts,
-      withdrawalByYear,
-      cumInflationIdx,
-      initialWithdrawalRates,
-      // pre-existing storage
       nominalBalances, realBalances, annualReturnsPct, tbillReturnsPct, inflationsPct,
       depletedFlags, depletionYears,
       sampledYearCounts, year1YearCounts,
@@ -151,11 +117,7 @@ function runSimulation(inputs, data) {
   return aggregate({
     N, Y, inputs, data, eligibleRows,
     nominalBalances, realBalances, annualReturnsPct, tbillReturnsPct, inflationsPct,
-    cumInflationIdx, withdrawalByYear,
     depletedFlags, depletionYears,
-    initialWithdrawalRates,
-    distributionStrategy, minimumWithdrawalAnnual,
-    allGkEvents, floorBindingCounts,
     sampledYearCounts, year1YearCounts, year1WeightedSum,
     drawnInflation, drawnStockReturn, correlationAssetKey,
     sorMode, sor2008Row,
@@ -226,10 +188,6 @@ function buildEligibleRows(inputs, data) {
 function runOneSim(ctx) {
   const {
     simIndex, inputs, eligibleRows, sorMode, sor2008Row, Y,
-    distributionStrategy, minimumWithdrawalAnnual,
-    realSpendingDeclinePct, upperGuardrailPct, lowerGuardrailPct, gkAdjustmentPct,
-    allGkEvents, floorBindingCounts,
-    withdrawalByYear, cumInflationIdx, initialWithdrawalRates,
     nominalBalances, realBalances, annualReturnsPct, tbillReturnsPct, inflationsPct,
     depletedFlags, depletionYears,
     sampledYearCounts, year1YearCounts,
@@ -248,20 +206,6 @@ function runOneSim(ctx) {
   realBalances[balanceBase]    = balance;
 
   const allocCount = inputs.allocations.length;
-
-  // --- Per-sim strategy state (v1.1 + v1.2)
-  let current_withdrawal_nominal = 0; // gross expense target carried year-to-year
-  let prior_year_portfolio_return = null;
-  let sim_floor_binding_count = 0;
-  const gkEventsForSim = (distributionStrategy === 'guyton_klinger') ? [] : null;
-
-  // Helper: get the annual gross expense for year t from the bucket schedule (today's dollars)
-  const bucketExpenseForYear = (t) => {
-    const bucketIdx = Math.min(((t - 1) / 5) | 0, inputs.buckets.length - 1);
-    let e = inputs.buckets[bucketIdx].expense || 0;
-    if (inputs.expense_mode === 'monthly') e *= 12;
-    return e;
-  };
 
   // PHASE 1: pre-draw Y row references (random with replacement).
   const rowSeq = new Array(Y);
@@ -319,12 +263,15 @@ function runOneSim(ctx) {
 
     // 1. Inflation index update — happens BEFORE expense lookup (today's-dollars to year-t dollars)
     inflationIndex *= 1 + row.inflation / 100;
-    inflationsPct[annBase + (t - 1)]  = row.inflation;
-    cumInflationIdx[annBase + (t - 1)] = inflationIndex;
+    inflationsPct[annBase + (t - 1)] = row.inflation;
 
-    // 2. Guaranteed income (SS / pension / annuity). All amounts in today's $.
-    //    Computed first because G-K's guardrail rate uses NET portfolio draw
-    //    (gross expense − income) / portfolio.
+    // 2. Year-t expense (today's $ -> nominal year-t $)
+    const bucketIdx = Math.min(((t - 1) / 5) | 0, inputs.buckets.length - 1);
+    let expense = inputs.buckets[bucketIdx].expense || 0;
+    if (inputs.expense_mode === 'monthly') expense *= 12;
+    if (inputs.inflation_adjust) expense *= inflationIndex;
+
+    // 3. Guaranteed income (SS / pension / annuity). All amounts in today's $.
     const age = inputs.current_age + t;
     const ss      = inputs.ss      || { amount: 0, start_age: 67 };
     const pension = inputs.pension || { amount: 0, start_age: 65, cola: false };
@@ -332,7 +279,8 @@ function runOneSim(ctx) {
 
     let income = 0;
     if (ss.amount > 0 && age >= ss.start_age) {
-      income += ss.amount * inflationIndex; // SS always COLA = inflation
+      // SS always has COLA equal to inflation (spec)
+      income += ss.amount * inflationIndex;
     }
     if (pension.amount > 0 && age >= pension.start_age) {
       income += pension.cola ? pension.amount * inflationIndex : pension.amount;
@@ -341,89 +289,8 @@ function runOneSim(ctx) {
       income += annuity.cola ? annuity.amount * inflationIndex : annuity.amount;
     }
 
-    // 3. Strategy-aware gross expense / withdrawal target.
-    //    All strategies anchor at year 1 using bucket 1 (today's $ × inflation_index
-    //    if inflation_adjust is on, else nominal). Year > 1 behavior:
-    //      • constant_dollar  — fully bucket-aware (preserves v1.0 behavior)
-    //      • forgo_inflation  — carry forward; permanent skip on loss years
-    //      • actual_spending  — carry forward × (inflation − decline); floor/ceiling = 50%/150% of current bucket inflated
-    //      • guyton_klinger   — Rule 1 (inflation skip on loss) + Rule 2 (guardrail check on NET rate, cuts gross expense only)
-    if (t === 1) {
-      const bucket1 = bucketExpenseForYear(1);
-      current_withdrawal_nominal = inputs.inflation_adjust ? bucket1 * inflationIndex : bucket1;
-      // Year-1 effective rate uses the gross expense vs starting portfolio.
-      initialWithdrawalRates[simIndex] = balance > 0 ? (current_withdrawal_nominal / balance) * 100 : 0;
-    } else if (distributionStrategy === 'constant_dollar') {
-      const bucketAnnual = bucketExpenseForYear(t);
-      current_withdrawal_nominal = inputs.inflation_adjust ? bucketAnnual * inflationIndex : bucketAnnual;
-    } else if (distributionStrategy === 'forgo_inflation') {
-      // Permanent skip: on loss year hold flat; on gain year apply inflation to last year's nominal value.
-      // Buckets 2+ ignored (per spec).
-      if (!(prior_year_portfolio_return < 0)) {
-        current_withdrawal_nominal *= 1 + row.inflation / 100;
-      }
-      // else: hold at last year's value — skipped raise is never made up.
-    } else if (distributionStrategy === 'actual_spending') {
-      // Net nominal growth = inflation − real spending decline (today's-dollars decline).
-      const netGrowthRate = (row.inflation - realSpendingDeclinePct) / 100;
-      current_withdrawal_nominal *= 1 + netGrowthRate;
-      // Floor/ceiling reference: 50% / 150% of CURRENT bucket's inflated target.
-      const bucketAnnual = bucketExpenseForYear(t);
-      const inflatedBucketTarget = inputs.inflation_adjust ? bucketAnnual * inflationIndex : bucketAnnual;
-      const wdFloor   = inflatedBucketTarget * 0.50;
-      const wdCeiling = inflatedBucketTarget * 1.50;
-      if (current_withdrawal_nominal < wdFloor)   current_withdrawal_nominal = wdFloor;
-      if (current_withdrawal_nominal > wdCeiling) current_withdrawal_nominal = wdCeiling;
-    } else if (distributionStrategy === 'guyton_klinger') {
-      // Rule 1: inflation rule — skip raise after a loss year, otherwise apply this year's inflation.
-      let proposed = (prior_year_portfolio_return != null && prior_year_portfolio_return < 0)
-        ? current_withdrawal_nominal
-        : current_withdrawal_nominal * (1 + row.inflation / 100);
-      // Rule 2: guardrail rate check on NET portfolio draw.
-      //   effective_rate = max(0, proposed − income) / portfolio
-      //   Surplus years (income > proposed) treated as 0% rate to avoid spurious lower-guardrail raises.
-      const proposed_net = Math.max(0, proposed - income);
-      const effectiveRatePct = balance > 0 ? (proposed_net / balance) * 100 : 0;
-      const yearsRemaining = Y - t;
-      const upperActive = yearsRemaining > 15; // final-15-year exception: no upper cuts late in plan
-      if (effectiveRatePct > upperGuardrailPct && upperActive) {
-        const oldProposed = proposed;
-        proposed *= 1 - gkAdjustmentPct / 100;
-        gkEventsForSim.push({
-          year: t, type: 'upper',
-          old_withdrawal: oldProposed, new_withdrawal: proposed,
-          effective_rate_pct: effectiveRatePct,
-        });
-      } else if (effectiveRatePct < lowerGuardrailPct && proposed_net > 0) {
-        // Lower guardrail has no final-15-year exception. Suppressed when no portfolio draw needed.
-        const oldProposed = proposed;
-        proposed *= 1 + gkAdjustmentPct / 100;
-        gkEventsForSim.push({
-          year: t, type: 'lower',
-          old_withdrawal: oldProposed, new_withdrawal: proposed,
-          effective_rate_pct: effectiveRatePct,
-        });
-      }
-      current_withdrawal_nominal = proposed;
-    }
-
-    // 4. Minimum annual withdrawal floor (v1.2). Applies AFTER strategy logic so
-    //    a strategy cut can be backstopped by the user's non-negotiable floor.
-    if (minimumWithdrawalAnnual > 0) {
-      const minNominal = inputs.inflation_adjust
-        ? minimumWithdrawalAnnual * inflationIndex
-        : minimumWithdrawalAnnual;
-      if (current_withdrawal_nominal < minNominal) {
-        current_withdrawal_nominal = minNominal;
-        sim_floor_binding_count++;
-      }
-    }
-
-    // 5. Record the final gross withdrawal for this year (for income paths).
-    withdrawalByYear[annBase + (t - 1)] = current_withdrawal_nominal;
-
-    // 6. Net portfolio draw — surplus rolls into portfolio.
-    const net = current_withdrawal_nominal - income;
+    // 4. Net withdrawal — surplus rolls into portfolio
+    const net = expense - income; // positive => draw, negative => surplus
     let postWithdraw;
     if (net >= 0) {
       postWithdraw = balance - net;
@@ -445,7 +312,7 @@ function runOneSim(ctx) {
       break;
     }
 
-    // 7. Apply weighted portfolio return (annual rebalancing implicit via fixed weights)
+    // 5. Apply weighted portfolio return (annual rebalancing implicit via fixed weights)
     let weightedReturnPct = 0;
     for (let i = 0; i < allocCount; i++) {
       const a = inputs.allocations[i];
@@ -453,20 +320,15 @@ function runOneSim(ctx) {
     }
     balance = postWithdraw * (1 + weightedReturnPct / 100);
 
-    // 8. Record
+    // 6. Record
     nominalBalances[balanceBase + t] = balance;
     realBalances[balanceBase + t]    = balance / inflationIndex;
     annualReturnsPct[annBase + (t - 1)] = weightedReturnPct;
     tbillReturnsPct[annBase + (t - 1)]  = row.st_tbills;
-
-    // 9. Strategy state update — carry portfolio return to next year for inflation-rule strategies.
-    prior_year_portfolio_return = weightedReturnPct;
   }
 
   depletedFlags[simIndex] = depleted ? 1 : 0;
   depletionYears[simIndex] = depletionYear;
-  if (allGkEvents)         allGkEvents[simIndex] = gkEventsForSim;
-  if (floorBindingCounts)  floorBindingCounts[simIndex] = sim_floor_binding_count;
 }
 
 function pickCorrelationAsset(inputs) {
@@ -490,11 +352,7 @@ function aggregate(ctx) {
   const {
     N, Y, inputs, data, eligibleRows,
     nominalBalances, realBalances, annualReturnsPct, tbillReturnsPct, inflationsPct,
-    cumInflationIdx, withdrawalByYear,
     depletedFlags, depletionYears,
-    initialWithdrawalRates,
-    distributionStrategy, minimumWithdrawalAnnual,
-    allGkEvents, floorBindingCounts,
     sampledYearCounts, year1YearCounts, year1WeightedSum,
     drawnInflation, drawnStockReturn, correlationAssetKey,
     sorMode, sor2008Row,
@@ -805,48 +663,6 @@ function aggregate(ctx) {
     correlation_asset_key: correlationAssetKey,
   };
 
-  // --- Distribution Strategy v1.1/v1.2 — income paths, G-K stats, floor binding.
-
-  // Median cumulative inflation index per year — used to convert nominal income paths to real.
-  const medianInflationIndex = computeMedianInflationIndexPath(cumInflationIdx, N, Y);
-
-  // Income percentile paths — per-year independent percentiles across all simulations.
-  const incomeNominalPaths = computeIncomePercentilePaths(withdrawalByYear, N, Y);
-  const incomeRealPaths = {};
-  for (const key of Object.keys(incomeNominalPaths)) {
-    incomeRealPaths[key] = incomeNominalPaths[key].map((v, y) => {
-      const idx = medianInflationIndex[y] || 1;
-      return v / idx;
-    });
-  }
-
-  // G-K aggregate statistics (only when strategy is guyton_klinger).
-  const gkStatistics = distributionStrategy === 'guyton_klinger'
-    ? computeGKStatistics(allGkEvents, N, Y)
-    : null;
-
-  // Year-1 withdrawal — median nominal across sims (will all be very close since year 1 has minimal randomness beyond inflation).
-  const year1Values = [];
-  for (let s = 0; s < N; s++) year1Values.push(withdrawalByYear[s * Y]);
-  const year1MedianNominal = percentileOf(year1Values, 50, 'asc');
-
-  // Year-1 effective withdrawal rate — median across sims.
-  const year1RatesArr = Array.from(initialWithdrawalRates);
-  const year1MedianRate = percentileOf(year1RatesArr, 50, 'asc');
-
-  // Floor-binding-year percentiles (only when minimum floor active).
-  let floorBindingPercentiles = null;
-  if (floorBindingCounts) {
-    const counts = Array.from(floorBindingCounts);
-    floorBindingPercentiles = {
-      p10: percentileOf(counts, 10, 'asc'),
-      p25: percentileOf(counts, 25, 'asc'),
-      p50: percentileOf(counts, 50, 'asc'),
-      p75: percentileOf(counts, 75, 'asc'),
-      p90: percentileOf(counts, 90, 'asc'),
-    };
-  }
-
   return {
     inputs_summary,
     percentile_paths,
@@ -854,19 +670,6 @@ function aggregate(ctx) {
     success_metrics,
     results_table,
     diagnostics,
-    // --- Distribution strategy outputs
-    distribution_strategy: distributionStrategy,
-    year1_withdrawal_nominal: year1MedianNominal,
-    year1_withdrawal_rate_pct: year1MedianRate,
-    minimum_withdrawal_annual: minimumWithdrawalAnnual,
-    income_percentile_paths: {
-      p10: incomeNominalPaths.p10, p25: incomeNominalPaths.p25, p50: incomeNominalPaths.p50,
-      p75: incomeNominalPaths.p75, p90: incomeNominalPaths.p90,
-      real_p10: incomeRealPaths.p10, real_p25: incomeRealPaths.p25, real_p50: incomeRealPaths.p50,
-      real_p75: incomeRealPaths.p75, real_p90: incomeRealPaths.p90,
-    },
-    gk_statistics: gkStatistics,
-    floor_binding_percentiles: floorBindingPercentiles,
   };
 }
 
@@ -931,99 +734,6 @@ function describePeriod(inputs, rows) {
   if (inputs.historical_period === 'postwar') return `${first}-${last} (post-WWII)`;
   if (inputs.historical_period === 'modern')  return `${first}-${last} (modern era)`;
   return `${first}-${last}`;
-}
-
-/* -----------------------------------------------------------
-   Distribution Strategy helpers (v1.1 + v1.2)
-   ----------------------------------------------------------- */
-function computeMedianInflationIndexPath(cumInflationIdx, N, Y) {
-  // For each year y, return the median (across sims) of the cumulative inflation
-  // index at end of that year. Used to deflate nominal income paths.
-  const out = new Array(Y).fill(1);
-  for (let y = 0; y < Y; y++) {
-    const col = new Array(N);
-    for (let s = 0; s < N; s++) col[s] = cumInflationIdx[s * Y + y];
-    col.sort((a, b) => a - b);
-    out[y] = col[Math.floor(N / 2)] || 1;
-  }
-  return out;
-}
-
-function computeIncomePercentilePaths(withdrawalByYear, N, Y) {
-  // Per-year independent percentiles: for each year y, sort all N withdrawal
-  // values and pick at p10/p25/p50/p75/p90 indices. Matches the methodology used
-  // for the income fan chart in the Income Variability Report.
-  const result = { p10: new Array(Y), p25: new Array(Y), p50: new Array(Y), p75: new Array(Y), p90: new Array(Y) };
-  const col = new Array(N);
-  const percentiles = [10, 25, 50, 75, 90];
-  const keys = ['p10', 'p25', 'p50', 'p75', 'p90'];
-  for (let y = 0; y < Y; y++) {
-    for (let s = 0; s < N; s++) col[s] = withdrawalByYear[s * Y + y];
-    const sorted = col.slice().sort((a, b) => a - b);
-    for (let i = 0; i < percentiles.length; i++) {
-      const idx = Math.min(N - 1, Math.floor((percentiles[i] / 100) * N));
-      result[keys[i]][y] = sorted[idx];
-    }
-  }
-  return result;
-}
-
-function computeGKStatistics(allGkEvents, N, Y) {
-  if (!allGkEvents || allGkEvents.length === 0) return null;
-  let simsWithCut = 0;
-  let simsWithRaise = 0;
-  const cutsPerSim   = new Array(N);
-  const raisesPerSim = new Array(N);
-  const firstCutYears = [];
-  const pctCutsByYear   = new Array(Y).fill(0);
-  const pctRaisesByYear = new Array(Y).fill(0);
-
-  for (let s = 0; s < N; s++) {
-    const events = allGkEvents[s] || [];
-    let cuts = 0, raises = 0, firstCut = null;
-    const seenCutYears = new Set();
-    const seenRaiseYears = new Set();
-    for (const ev of events) {
-      if (ev.type === 'upper') {
-        cuts++;
-        if (firstCut == null) firstCut = ev.year;
-        if (!seenCutYears.has(ev.year)) { seenCutYears.add(ev.year); pctCutsByYear[ev.year - 1] += 1; }
-      } else if (ev.type === 'lower') {
-        raises++;
-        if (!seenRaiseYears.has(ev.year)) { seenRaiseYears.add(ev.year); pctRaisesByYear[ev.year - 1] += 1; }
-      }
-    }
-    cutsPerSim[s]   = cuts;
-    raisesPerSim[s] = raises;
-    if (cuts   > 0) simsWithCut++;
-    if (raises > 0) simsWithRaise++;
-    if (firstCut != null) firstCutYears.push(firstCut);
-  }
-
-  // Normalize per-year hits to percentages of all sims.
-  for (let y = 0; y < Y; y++) {
-    pctCutsByYear[y]   = (pctCutsByYear[y]   / N) * 100;
-    pctRaisesByYear[y] = (pctRaisesByYear[y] / N) * 100;
-  }
-
-  const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-  const median = (arr) => {
-    if (!arr.length) return null;
-    const s = arr.slice().sort((a, b) => a - b);
-    const m = Math.floor(s.length / 2);
-    return s.length % 2 !== 0 ? s[m] : (s[m - 1] + s[m]) / 2;
-  };
-
-  return {
-    pct_sims_with_any_cut:   (simsWithCut   / N) * 100,
-    pct_sims_with_any_raise: (simsWithRaise / N) * 100,
-    avg_cuts_per_sim:        avg(Array.from(cutsPerSim)),
-    avg_raises_per_sim:      avg(Array.from(raisesPerSim)),
-    avg_year_of_first_cut:    firstCutYears.length ? avg(firstCutYears)    : null,
-    median_year_of_first_cut: firstCutYears.length ? median(firstCutYears) : null,
-    pct_cuts_by_year:   pctCutsByYear,
-    pct_raises_by_year: pctRaisesByYear,
-  };
 }
 
 function percentileOf(values, pct, direction) {
