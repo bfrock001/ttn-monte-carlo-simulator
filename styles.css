@@ -579,6 +579,7 @@ em { font-style: italic; }
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-bottom: 14px;
+  align-items: end; /* lock inputs to bottom so they align even if one label wraps to 2 lines */
 }
 .field-row:last-child { margin-bottom: 0; }
 .field-row .field { margin-bottom: 0; }

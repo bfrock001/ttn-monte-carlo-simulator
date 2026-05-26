@@ -976,6 +976,11 @@ function renderBuckets() {
   const monthly = INPUT_STATE.expense_mode === 'monthly';
   const uniform = INPUT_STATE.expenses_uniform;
 
+  // Strategies that lock buckets 2-N (visually + functionally disabled):
+  // Constant Dollar uses only bucket 1. Other strategies that drive baseline
+  // from buckets keep them editable.
+  const cdLockBuckets = INPUT_STATE.distribution_strategy === 'constant_dollar';
+
   INPUT_STATE.buckets.forEach((bucket, idx) => {
     const startYear = idx * 5 + 1;
     const endYear   = Math.min(startYear + 4, INPUT_STATE.period_years);
@@ -984,7 +989,7 @@ function renderBuckets() {
 
     const wrap = document.createElement('div');
     wrap.className = 'bucket';
-    if (uniform && idx > 0) wrap.classList.add('bucket--locked');
+    if ((uniform || cdLockBuckets) && idx > 0) wrap.classList.add('bucket--locked');
 
     const header = document.createElement('div');
     header.className = 'bucket__header';
@@ -1009,10 +1014,10 @@ function renderBuckets() {
     lbl.setAttribute('for', `bucket-${idx}`);
     labelRow.appendChild(lbl);
 
-    if (uniform && idx > 0) {
+    if ((uniform || cdLockBuckets) && idx > 0) {
       const synced = document.createElement('span');
       synced.className = 'bucket__carry';
-      synced.textContent = '= Bucket 1';
+      synced.textContent = cdLockBuckets ? 'not used' : '= Bucket 1';
       labelRow.appendChild(synced);
     } else if (!bucket.manual && idx > 0 && bucket.expense > 0) {
       const carry = document.createElement('span');
@@ -1031,7 +1036,7 @@ function renderBuckets() {
     const displayVal = monthly ? Math.round((bucket.expense || 0) / 12) : (bucket.expense || 0);
     input.value = bucket.expense > 0 ? formatCurrency(displayVal) : '$0';
 
-    if (uniform && idx > 0) {
+    if ((uniform || cdLockBuckets) && idx > 0) {
       input.disabled = true;
     } else {
       attachCurrencyHandlers(input, (raw) => {
@@ -1075,14 +1080,17 @@ function renderBuckets() {
 }
 
 function strategyBucketNote(strategy) {
+  if (strategy === 'constant_dollar') {
+    return 'Not used under Constant Dollar. Only Bucket 1 drives every year’s withdrawal (inflation-adjusted).';
+  }
   if (strategy === 'forgo_inflation') {
-    return 'Ignored under Forgo Inflation. Bucket 1 sets the starting expense; subsequent years carry forward year-to-year and skipped inflation raises never catch up.';
+    return 'Used as the baseline withdrawal target for years in this bucket. Inflation raises are skipped in years following a portfolio loss, and skipped raises are permanent.';
   }
   if (strategy === 'actual_spending') {
     return 'Used as a 50% floor / 150% ceiling reference for years in this bucket. Not used as the primary withdrawal target.';
   }
   if (strategy === 'guyton_klinger') {
-    return 'Ignored under Guyton-Klinger. All guardrail calculations are based on the strategy’s running expense, not this bucket’s amount.';
+    return 'Used as the baseline withdrawal target for years in this bucket. Guyton-Klinger guardrails may cut or raise the current year’s withdrawal based on the effective rate.';
   }
   return null;
 }
