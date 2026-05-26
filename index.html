@@ -490,33 +490,55 @@
             <p id="portfolio-chart-depletion-note" class="chart-card__note" hidden></p>
           </div>
 
-          <ul class="summary-strip dev-results-strip" id="dev-headline"></ul>
+          <!-- ===== Results Summary Text Block (Section 6.3) ===== -->
+          <div id="results-summary" class="results-summary"></div>
 
-          <div class="dev-results-grid">
-            <div class="dev-card">
-              <h3 class="dev-card__title">Results Table (5 percentiles)</h3>
-              <div class="table-wrap">
-                <table class="ref-table" id="dev-results-table">
-                  <thead>
-                    <tr>
-                      <th>Metric</th>
-                      <th class="num">10th</th>
-                      <th class="num">25th</th>
-                      <th class="num">50th</th>
-                      <th class="num">75th</th>
-                      <th class="num">90th</th>
-                    </tr>
-                  </thead>
-                  <tbody></tbody>
-                </table>
-              </div>
+          <!-- ===== Results Metrics Table (Section 6.4) ===== -->
+          <div class="results-table-card">
+            <h3 class="results-table-card__title">Results by Percentile</h3>
+            <div class="table-wrap">
+              <table class="results-table" id="dev-results-table">
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th class="num">
+                      <span class="th-percentile">10<sup>th</sup></span>
+                      <span class="th-sublabel">pessimistic</span>
+                    </th>
+                    <th class="num">
+                      <span class="th-percentile">25<sup>th</sup></span>
+                      <span class="th-sublabel">&nbsp;</span>
+                    </th>
+                    <th class="num is-median">
+                      <span class="th-percentile">50<sup>th</sup></span>
+                      <span class="th-sublabel">median</span>
+                    </th>
+                    <th class="num">
+                      <span class="th-percentile">75<sup>th</sup></span>
+                      <span class="th-sublabel">&nbsp;</span>
+                    </th>
+                    <th class="num">
+                      <span class="th-percentile">90<sup>th</sup></span>
+                      <span class="th-sublabel">optimistic</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
             </div>
-
-            <div class="dev-card">
-              <h3 class="dev-card__title">Diagnostics</h3>
-              <dl class="dev-dl" id="dev-diagnostics"></dl>
-            </div>
+            <p class="results-table-card__note">
+              CAGR is time-weighted: the geometric mean of annual portfolio returns earned by the assets, independent of withdrawals. Sharpe ratio uses arithmetic mean return minus average T-Bill rate, divided by standard deviation. Maximum Drawdown (investment) measures peak-to-trough decline of a no-withdrawal balance trajectory; Maximum Drawdown (account) measures the actual account balance trajectory including withdrawals. All returns are pre-tax.
+            </p>
           </div>
+
+          <!-- ===== Diagnostics ===== -->
+          <div class="diagnostics-card">
+            <h3 class="diagnostics-card__title">Diagnostics</h3>
+            <dl class="dev-dl" id="dev-diagnostics"></dl>
+          </div>
+
+          <!-- Legacy placeholder for the dev-headline strip — preserved so existing JS that targets #dev-headline doesn't error -->
+          <ul id="dev-headline" hidden></ul>
 
         </div>
       </div>

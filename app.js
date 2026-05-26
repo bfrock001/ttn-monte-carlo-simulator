@@ -1967,6 +1967,74 @@ function bindPortfolioChartToggle() {
   });
 }
 
+/* ============================================================
+   Section 6.3 — Results Summary Text Block
+   ============================================================ */
+function renderResultsSummaryText(results) {
+  const el = document.getElementById('results-summary');
+  if (!el) return;
+  const inp = results.inputs_summary;
+  const sm  = results.success_metrics;
+  const sims = inp.n_simulations.toLocaleString('en-US');
+  const initBal = formatCurrency(inp.initial_balance);
+  // Parse historical period e.g. "1976-2025 (modern era)" → start/end year
+  const m = String(inp.historical_period).match(/(\d{4})\D+(\d{4})/);
+  const startYear = m ? m[1] : '—';
+  const endYear   = m ? m[2] : '—';
+  const portMean = inp.portfolio_historical_mean.toFixed(2);
+  const portCagr = inp.portfolio_historical_cagr.toFixed(2);
+  const portStd  = inp.portfolio_historical_std.toFixed(2);
+  const inflMean = inp.inflation_historical_mean.toFixed(2);
+  const inflStd  = inp.inflation_historical_std.toFixed(2);
+  const bucket1Expense = INPUT_STATE.buckets[0]?.expense || 0;
+  const successRate = sm.success_rate_pct.toFixed(1);
+
+  // Strategy-specific descriptor
+  const stratName = {
+    none: 'None — Use Expense Schedule',
+    constant_dollar: 'Constant Dollar (Bengen 4% rule)',
+    forgo_inflation: 'Forgo Inflation Adjustment',
+    actual_spending: 'Actual Spending Decline',
+    guyton_klinger: 'Guyton-Klinger Guardrails',
+  }[INPUT_STATE.distribution_strategy] || INPUT_STATE.distribution_strategy;
+
+  const stratDescription = (() => {
+    const sp = INPUT_STATE.strategy_params || {};
+    switch (INPUT_STATE.distribution_strategy) {
+      case 'constant_dollar':
+        return `Withdrawals followed the <strong>Constant Dollar</strong> method — Bucket 1’s amount (${formatCurrency(bucket1Expense)} in today’s dollars) inflation-adjusted each subsequent year.`;
+      case 'forgo_inflation':
+        return `Withdrawals followed the <strong>Forgo Inflation</strong> method — each year’s bucket × the effective inflation index. Inflation raises are skipped permanently after any portfolio-loss year.`;
+      case 'actual_spending':
+        return `Withdrawals followed the <strong>Actual Spending Decline</strong> method at ${(sp.real_spending_decline_pct || 2).toFixed(1)}% real decline per year — Bucket 1 anchored at year 1 (${formatCurrency(bucket1Expense)} in today’s dollars), then carry-forward growth at (inflation − decline). Floor and ceiling at 50% / 150% of Bucket 1’s inflated target.`;
+      case 'guyton_klinger':
+        return `Withdrawals followed <strong>Guyton-Klinger Guardrails</strong> — bucket-driven baseline, Rule 1 inflation skip after loss years, Rule 2 guardrails (cut ${(sp.upper_adjustment_pct || 10).toFixed(0)}% if rate > ${(sp.upper_guardrail_pct || 6).toFixed(1)}%; raise ${(sp.lower_adjustment_pct || 10).toFixed(0)}% if rate < ${(sp.lower_guardrail_pct || 4).toFixed(1)}%). Upper cut suspended in the final 15 years.`;
+      case 'none':
+      default:
+        return `Withdrawals followed your expense schedule literally — each year’s bucket value, inflation-adjusted from today’s dollars.`;
+    }
+  })();
+
+  let html = '';
+  html += `<p>Monte Carlo simulation results for <em>${sims}</em> portfolios with a <em>${initBal}</em> initial balance, using historical returns data from <em>Jan ${startYear}</em> to <em>Dec ${endYear}</em> with annual sampling. The historical pre-tax return for the selected portfolio over this period was <em>${portMean}%</em> mean return (<em>${portCagr}%</em> CAGR) with <em>${portStd}%</em> standard deviation of annual returns.</p>`;
+  html += `<p>${stratDescription} The inflation model used historical inflation with <em>${inflMean}%</em> mean and <em>${inflStd}%</em> standard deviation based on CPI-U data over the same window. Generated inflation samples were correlated with simulated asset returns based on row-level historical correlations.</p>`;
+  if (inp.constraining_asset && inp.constraining_asset_start > parseInt(startYear, 10)) {
+    html += `<p>The available historical data for the simulation inputs was constrained by <em>${escapeHtml(inp.constraining_asset)}</em>, whose native data begins in <em>${inp.constraining_asset_start}</em>.</p>`;
+  }
+  if (inp.sequence_of_returns_active) {
+    if (inp.sor_mode === 'forced_2008') {
+      html += `<p>This simulation applied <strong>2008’s actual returns</strong> to Year 1 of every portfolio path as a sequence-of-returns stress test.</p>`;
+    } else if (inp.sor_mode === 'computed_worst') {
+      html += `<p>This simulation applied a <strong>worst-year-first</strong> sequence-of-returns stress test — within each simulation’s random 30-year sequence, the year with the lowest weighted portfolio return was moved to Year 1.</p>`;
+    }
+  }
+  if (results.minimum_withdrawal_annual > 0) {
+    html += `<p>A minimum annual withdrawal floor of <em>${formatCurrency(results.minimum_withdrawal_annual)}</em> was active. The floor grows with inflation each year; it overrides the strategy’s output whenever the strategy would calculate a lower amount.</p>`;
+  }
+  html += `<p>All returns are pre-tax — users should account for income taxes within their expense inputs. Portfolio is rebalanced annually after each year’s withdrawal. Overall success rate: <strong>${successRate}%</strong> across <em>${sims}</em> simulations.</p>`;
+  el.innerHTML = html;
+}
+
 function devRenderResults(results) {
   hideElement('dev-progress');
   hideElement('results-placeholder');
@@ -1978,65 +2046,50 @@ function devRenderResults(results) {
   renderSuccessCard(results);
   renderPortfolioFanChart(results, currentPortfolioMode);
   bindPortfolioChartToggle();
+  renderResultsSummaryText(results);
 
   const elapsed = ((performance.now() - WORKER.startedAt) / 1000).toFixed(2);
 
-  // ---- Headline strip
-  const headline = document.getElementById('dev-headline');
-  if (headline) {
-    headline.innerHTML = '';
-    headline.appendChild(devSummaryCell(
-      'Success Rate',
-      `${results.success_metrics.success_rate_pct.toFixed(1)}%`,
-      `${results.success_metrics.success_count.toLocaleString('en-US')} of ${results.success_metrics.total_simulations.toLocaleString('en-US')} survived`
-    ));
-    headline.appendChild(devSummaryCell(
-      'Median Ending Balance',
-      fmtCurrencyShort(results.statistics.p50.ending_balance_nominal),
-      `Real: ${fmtCurrencyShort(results.statistics.p50.ending_balance_real)}`
-    ));
-    headline.appendChild(devSummaryCell(
-      'Median CAGR (nominal)',
-      results.statistics.p50.cagr_nominal != null
-        ? `${results.statistics.p50.cagr_nominal.toFixed(2)}%`
-        : '—',
-      `Real CAGR: ${results.statistics.p50.cagr_real != null ? results.statistics.p50.cagr_real.toFixed(2) + '%' : '—'}`
-    ));
-    headline.appendChild(devSummaryCell(
-      'Worker Runtime',
-      `${elapsed}s`,
-      `${results.diagnostics.runtime_ms} ms reported by worker`
-    ));
-  }
-
-  // ---- Results table
+  // ---- Results metrics table (Section 6.4)
   const tbody = document.querySelector('#dev-results-table tbody');
   if (tbody) {
     const s = results.statistics;
+    const initial = results.inputs_summary.initial_balance;
+    // Row spec: [label, val10, val25, val50, val75, val90, formatter, colorMode]
+    //   colorMode: 'balance' tags cells by value vs initial (positive/eroded/zero)
+    //              'plain' uses default
     const rows = [
-      ['Ending balance (nominal)', s.p10.ending_balance_nominal, s.p25.ending_balance_nominal, s.p50.ending_balance_nominal, s.p75.ending_balance_nominal, s.p90.ending_balance_nominal, fmtCurrencyShort],
-      ['Ending balance (real)',    s.p10.ending_balance_real,    s.p25.ending_balance_real,    s.p50.ending_balance_real,    s.p75.ending_balance_real,    s.p90.ending_balance_real,    fmtCurrencyShort],
-      ['CAGR — nominal',           s.p10.cagr_nominal, s.p25.cagr_nominal, s.p50.cagr_nominal, s.p75.cagr_nominal, s.p90.cagr_nominal, fmtPctMaybe],
-      ['CAGR — real',              s.p10.cagr_real,    s.p25.cagr_real,    s.p50.cagr_real,    s.p75.cagr_real,    s.p90.cagr_real,    fmtPctMaybe],
-      ['Annualized volatility',    s.p10.annualized_volatility, s.p25.annualized_volatility, s.p50.annualized_volatility, s.p75.annualized_volatility, s.p90.annualized_volatility, fmtPctMaybe],
-      ['Sharpe ratio',             s.p10.sharpe_ratio, s.p25.sharpe_ratio, s.p50.sharpe_ratio, s.p75.sharpe_ratio, s.p90.sharpe_ratio, (v) => v != null ? v.toFixed(3) : '—'],
-      ['Max drawdown — investment (Peak to Trough)', s.p10.max_drawdown_investment_pct, s.p25.max_drawdown_investment_pct, s.p50.max_drawdown_investment_pct, s.p75.max_drawdown_investment_pct, s.p90.max_drawdown_investment_pct, fmtPctMaybe],
-      ['Max drawdown — account (Peak to Trough)',    s.p10.max_drawdown_pct,             s.p25.max_drawdown_pct,             s.p50.max_drawdown_pct,             s.p75.max_drawdown_pct,             s.p90.max_drawdown_pct,             fmtPctMaybe],
-      ['Depleted?',                s.p10.depleted, s.p25.depleted, s.p50.depleted, s.p75.depleted, s.p90.depleted, (v) => v ? 'Yes' : 'No'],
-      ['Depletion year',           s.p10.depletion_year, s.p25.depletion_year, s.p50.depletion_year, s.p75.depletion_year, s.p90.depletion_year, (v) => v == null ? '—' : `Year ${v}`],
+      ['Ending balance (nominal)', s.p10.ending_balance_nominal, s.p25.ending_balance_nominal, s.p50.ending_balance_nominal, s.p75.ending_balance_nominal, s.p90.ending_balance_nominal, fmtCurrencyShort, 'balance'],
+      ['Ending balance (real)',    s.p10.ending_balance_real,    s.p25.ending_balance_real,    s.p50.ending_balance_real,    s.p75.ending_balance_real,    s.p90.ending_balance_real,    fmtCurrencyShort, 'balance'],
+      ['CAGR — nominal',           s.p10.cagr_nominal, s.p25.cagr_nominal, s.p50.cagr_nominal, s.p75.cagr_nominal, s.p90.cagr_nominal, fmtPctMaybe, 'plain'],
+      ['CAGR — real',              s.p10.cagr_real,    s.p25.cagr_real,    s.p50.cagr_real,    s.p75.cagr_real,    s.p90.cagr_real,    fmtPctMaybe, 'plain'],
+      ['Annualized volatility',    s.p10.annualized_volatility, s.p25.annualized_volatility, s.p50.annualized_volatility, s.p75.annualized_volatility, s.p90.annualized_volatility, fmtPctMaybe, 'plain'],
+      ['Sharpe ratio',             s.p10.sharpe_ratio, s.p25.sharpe_ratio, s.p50.sharpe_ratio, s.p75.sharpe_ratio, s.p90.sharpe_ratio, (v) => v != null ? v.toFixed(3) : '—', 'plain'],
+      ['Max drawdown — investment (Peak to Trough)', s.p10.max_drawdown_investment_pct, s.p25.max_drawdown_investment_pct, s.p50.max_drawdown_investment_pct, s.p75.max_drawdown_investment_pct, s.p90.max_drawdown_investment_pct, fmtPctMaybe, 'plain'],
+      ['Max drawdown — account (Peak to Trough)',    s.p10.max_drawdown_pct,             s.p25.max_drawdown_pct,             s.p50.max_drawdown_pct,             s.p75.max_drawdown_pct,             s.p90.max_drawdown_pct,             fmtPctMaybe, 'plain'],
+      ['Depleted?',                s.p10.depleted, s.p25.depleted, s.p50.depleted, s.p75.depleted, s.p90.depleted, (v) => v ? 'Yes' : 'No', 'plain'],
+      ['Depletion year',           s.p10.depletion_year, s.p25.depletion_year, s.p50.depletion_year, s.p75.depletion_year, s.p90.depletion_year, (v) => v == null ? '—' : `Year ${v}`, 'plain'],
     ];
     tbody.innerHTML = '';
     for (const row of rows) {
       const tr = document.createElement('tr');
       const label = document.createElement('td');
       label.textContent = row[0];
-      label.className = 'asset-name';
+      label.className = 'metric-label';
       tr.appendChild(label);
       const fmt = row[6];
+      const colorMode = row[7];
       for (let i = 1; i <= 5; i++) {
         const td = document.createElement('td');
         td.className = 'num';
-        td.textContent = fmt(row[i]);
+        if (i === 3) td.classList.add('is-median-col'); // p50 is the 3rd value column (index 1..5; 3 → p50)
+        const v = row[i];
+        td.textContent = fmt(v);
+        if (colorMode === 'balance' && typeof v === 'number') {
+          if (v <= 0)                td.classList.add('balance-zero');
+          else if (v >= initial)     td.classList.add('balance-positive');
+          else                       td.classList.add('balance-eroded');
+        }
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
