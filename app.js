@@ -2181,8 +2181,18 @@ function renderPortfolioFanChart(results, mode) {
           callbacks: {
             title: (items) => `Age ${items[0].label}`,
             label: (ctx) => {
-              if (ctx.dataset.label.startsWith('_')) return null;
-              return `${ctx.dataset.label}: ${fmtCurrencyShort(ctx.parsed.y)}`;
+              const lbl = ctx.dataset.label;
+              if (lbl.startsWith('_')) return null;
+              // For band datasets, look up the matching lower-bound dataset (_p10 / _p25)
+              // so the tooltip shows BOTH ends of the band, not just the upper edge.
+              if (lbl === '10–90% range' || lbl === '25–75% range') {
+                const loLabel = lbl === '10–90% range' ? '_p10' : '_p25';
+                const loDs = ctx.chart.data.datasets.find((d) => d.label === loLabel);
+                const lo = loDs ? loDs.data[ctx.dataIndex] : null;
+                const hi = ctx.parsed.y;
+                if (lo != null) return `${lbl}: ${fmtCurrencyShort(lo)} – ${fmtCurrencyShort(hi)}`;
+              }
+              return `${lbl}: ${fmtCurrencyShort(ctx.parsed.y)}`;
             },
           },
         },
@@ -2439,8 +2449,19 @@ function renderIncomeFanChart(results, mode) {
         tooltip: {
           callbacks: {
             title: (items) => `Age ${items[0].label}`,
-            label: (ctx) => ctx.dataset.label.startsWith('_') ? null
-              : `${ctx.dataset.label}: ${fmtCurrencyShort(ctx.parsed.y)}`,
+            label: (ctx) => {
+              const lbl = ctx.dataset.label;
+              if (lbl.startsWith('_')) return null;
+              // For band datasets, show both ends — look up the matching lower-bound dataset.
+              if (lbl === '10–90% range' || lbl === '25–75% range') {
+                const loLabel = lbl === '10–90% range' ? '_p10' : '_p25';
+                const loDs = ctx.chart.data.datasets.find((d) => d.label === loLabel);
+                const lo = loDs ? loDs.data[ctx.dataIndex] : null;
+                const hi = ctx.parsed.y;
+                if (lo != null) return `${lbl}: ${fmtCurrencyShort(lo)} – ${fmtCurrencyShort(hi)}`;
+              }
+              return `${lbl}: ${fmtCurrencyShort(ctx.parsed.y)}`;
+            },
           },
         },
       },
