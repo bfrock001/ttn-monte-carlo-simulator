@@ -1638,6 +1638,7 @@ const STRATEGY_INFO_CONTENT = {
           'Year 1 is the anchor — no cap test. The implicit target rate ($50K ÷ $1M = 5%) is what drives every subsequent year’s target.',
           'Year 3 illustrates the most common confusion: a +40% market year still triggers the floor cap because target ($42,675) is below prior × 0.975 ($47,531). The cap test compares target to prior, not to the return.',
           'In the actual implementation, the cap test runs in real (today’s $) dollars. With nonzero inflation, the nominal ceiling/floor automatically scales — at 10% inflation, the +5% real ceiling becomes roughly +15.5% nominal.',
+          'Algebraically equivalent to Vanguard’s published nominal formulation. Vanguard often writes the caps as prior_actual_nominal × (1 + inflation_this_year) × (1 ± cap%). This implementation stores the post-cap value in real (today’s $) dollars, applies the ± cap% there, and multiplies by the current inflation index to get nominal. Substituting the definitions, both produce the same nominal ceiling and floor each year and the same carry-forward trajectory — including when caps fire, since the post-cap value (not a fixed baseline) is what propagates forward.',
         ],
       },
     ],
