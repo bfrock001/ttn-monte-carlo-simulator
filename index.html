@@ -329,14 +329,14 @@
             <div class="info-box">
               <strong>i</strong>
               <p>
-                Each year a tentative withdrawal is computed as <em>current portfolio &times; target rate</em>, where the target rate is implied by Bucket&nbsp;1 &divide; starting balance. The ceiling caps year-over-year nominal increases; the floor caps year-over-year nominal decreases. Spending floats with the portfolio but never moves more than these bounds in a single year.
+                Each year a tentative withdrawal is computed as <em>current portfolio &times; target rate</em>, where the target rate is implied by Bucket&nbsp;1 &divide; starting balance. The caps are applied in <strong>real (today&rsquo;s $) dollars</strong> &mdash; the ceiling caps year-over-year real raises; the floor caps year-over-year real cuts. The nominal cap automatically scales with inflation.
               </p>
             </div>
 
             <div class="preview-box">
               <div class="preview-row"><span>Implied target rate</span><span id="vds-preview-rate">&mdash;</span></div>
-              <div class="preview-row"><span>Year 2 ceiling (max raise)</span><span id="vds-preview-ceiling">&mdash;</span></div>
-              <div class="preview-row"><span>Year 2 floor (max cut)</span><span id="vds-preview-floor">&mdash;</span></div>
+              <div class="preview-row"><span>Year 2 ceiling (max real raise)</span><span id="vds-preview-ceiling">&mdash;</span></div>
+              <div class="preview-row"><span>Year 2 floor (max real cut)</span><span id="vds-preview-floor">&mdash;</span></div>
             </div>
           </div>
         </section>
@@ -589,12 +589,12 @@
               </div>
             </div>
 
-            <!-- Guardrail heatmap (G-K only) -->
+            <!-- Spending-event heatmap (G-K and VDS) -->
             <div id="guardrail-heatmap-card" class="chart-card" hidden>
               <div class="chart-card__head">
-                <h3 class="chart-card__title">Guardrail Activity by Simulation Year</h3>
+                <h3 class="chart-card__title" id="guardrail-heatmap-title">Guardrail Activity by Simulation Year</h3>
               </div>
-              <p class="chart-card__intro">
+              <p class="chart-card__intro" id="guardrail-heatmap-intro">
                 Red bars: % of simulations with a spending cut (upper guardrail) that year. Green bars: % with a spending raise (lower guardrail). Taller red bars early indicate years when poor markets most commonly triggered cuts.
               </p>
               <div class="chart-container" style="height: 280px;">

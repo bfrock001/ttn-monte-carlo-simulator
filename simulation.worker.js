@@ -107,7 +107,8 @@ function runSimulation(inputs, data) {
 
   // G-K event log — only populated when strategy === 'guyton_klinger'.
   // Outer array indexed by simIndex; inner array of {year, type, old_withdrawal, new_withdrawal, effective_rate_pct}.
-  const allGkEvents = distributionStrategy === 'guyton_klinger' ? new Array(N) : null;
+  const allGkEvents  = distributionStrategy === 'guyton_klinger'   ? new Array(N) : null;
+  const allVdsEvents = distributionStrategy === 'vanguard_dynamic' ? new Array(N) : null;
 
   // Per-sim floor-binding counts (years in which minimum_withdrawal_annual overrode the strategy).
   const floorBindingCounts = minimumWithdrawalAnnual > 0 ? new Int16Array(N) : null;
@@ -141,6 +142,7 @@ function runSimulation(inputs, data) {
       vdsCeilingPct,
       vdsFloorPct,
       allGkEvents,
+      allVdsEvents,
       floorBindingCounts,
       withdrawalByYear,
       cumInflationIdx,
@@ -166,7 +168,7 @@ function runSimulation(inputs, data) {
     depletedFlags, depletionYears,
     initialWithdrawalRates,
     distributionStrategy, minimumWithdrawalAnnual,
-    allGkEvents, floorBindingCounts,
+    allGkEvents, allVdsEvents, floorBindingCounts,
     sampledYearCounts, year1YearCounts, year1WeightedSum,
     drawnInflation, drawnStockReturn, correlationAssetKey,
     sorMode, sor2008Row,
@@ -240,7 +242,7 @@ function runOneSim(ctx) {
     distributionStrategy, minimumWithdrawalAnnual,
     realSpendingDeclinePct, upperGuardrailPct, lowerGuardrailPct, gkUpperAdjustmentPct, gkLowerAdjustmentPct,
     vdsCeilingPct, vdsFloorPct,
-    allGkEvents, floorBindingCounts,
+    allGkEvents, allVdsEvents, floorBindingCounts,
     withdrawalByYear, cumInflationIdx, initialWithdrawalRates,
     nominalBalances, realBalances, annualReturnsPct, tbillReturnsPct, inflationsPct,
     depletedFlags, depletionYears,
@@ -274,6 +276,11 @@ function runOneSim(ctx) {
   // advance in loss years. Bucket transitions scale this real value directly.
   let gk_real_withdrawal = 0;
   const gkEventsForSim = (distributionStrategy === 'guyton_klinger') ? [] : null;
+  // VDS real-dollar carry-forward state. Holds last year's actual withdrawal in
+  // today's $. Ceiling/floor are applied to the real value so the year-over-year
+  // caps remain inflation-adjusted (Vanguard's published methodology).
+  let vds_real_withdrawal = 0;
+  const vdsEventsForSim = (distributionStrategy === 'vanguard_dynamic') ? [] : null;
 
   // Helper: get the annual gross expense for year t from the bucket schedule (today's dollars)
   const bucketExpenseForYear = (t) => {
@@ -383,13 +390,16 @@ function runOneSim(ctx) {
     //                           Upper cut suspended when years_remaining ≤ 15. Lower raise
     //                           always active.
     //      • vanguard_dynamic — Vanguard Dynamic Spending. Year 1 anchor = bucket[1]; implies
-    //                           target_rate = bucket[1] / initial_balance. Year t ≥ 2:
-    //                             target_t = current_balance × target_rate
-    //                             ceiling_t = prior_actual × (1 + vds_ceiling / 100)
-    //                             floor_t   = prior_actual × (1 − vds_floor / 100)
-    //                             actual_t  = clamp(target_t, floor_t, ceiling_t), carries forward.
-    //                           Spending floats with portfolio value but year-over-year change
-    //                           is bounded. Buckets 2-N are locked (the strategy is purely
+    //                           target_rate = bucket[1] / initial_balance. Year t ≥ 2 (all in REAL,
+    //                           today's $):
+    //                             target_real_t  = (current_balance × target_rate) / inflation_index
+    //                             ceiling_real_t = prior_real × (1 + vds_ceiling / 100)
+    //                             floor_real_t   = prior_real × (1 − vds_floor / 100)
+    //                             actual_real_t  = clamp(target_real_t, floor_real_t, ceiling_real_t)
+    //                             actual_nominal_t = actual_real_t × inflation_index, carries forward.
+    //                           Year-over-year caps operate on REAL spending (Vanguard's published
+    //                           methodology), so the nominal ceiling/floor automatically scales with
+    //                           inflation. Buckets 2-N are locked (the strategy is purely
     //                           portfolio-driven after the year-1 anchor).
 
     // eff_inflation_index is the cumulative inflation through year t-1 with skipped
@@ -498,27 +508,42 @@ function runOneSim(ctx) {
         }
       }
     } else if (distributionStrategy === 'vanguard_dynamic') {
-      // Vanguard Dynamic Spending. The target each year is a constant
-      // percentage of the *current* portfolio (target_rate is implied by
-      // bucket[1] / initial_balance), bounded by a year-over-year ceiling
-      // and floor. Year 1 anchors at bucket[1]; thereafter spending floats
-      // with the portfolio but is smoothed by the caps.
+      // Vanguard Dynamic Spending. The tentative withdrawal each year is a
+      // constant percentage of the *current* portfolio (target_rate is implied
+      // by bucket[1] / initial_balance). The year-over-year caps are applied
+      // in REAL (today's $) dollars per Vanguard's published methodology, so
+      // the nominal caps automatically scale with inflation. Year 1 anchors
+      // at bucket[1] in today's $.
 
       if (t === 1) {
         const bucket1 = bucketExpenseForYear(1);
-        current_withdrawal_nominal = bucket1;
+        vds_real_withdrawal = bucket1;
+        current_withdrawal_nominal = bucket1;  // inflationIndex == 1.0 at year 1
       } else {
         const bucket1 = bucketExpenseForYear(1);
         const targetRate = inputs.initial_balance > 0 ? bucket1 / inputs.initial_balance : 0;
-        const target  = balance * targetRate;
-        const ceiling = current_withdrawal_nominal * (1 + vdsCeilingPct / 100);
-        const floor   = current_withdrawal_nominal * (1 - vdsFloorPct  / 100);
-        // Clamp target into [floor, ceiling]. If portfolio has grown sharply
-        // we hit the ceiling; if it dropped sharply we hit the floor.
-        let proposed = target;
-        if (proposed > ceiling) proposed = ceiling;
-        if (proposed < floor)   proposed = floor;
-        current_withdrawal_nominal = proposed;
+        // target_nominal floats with the portfolio at the constant target rate.
+        const target_nominal = balance * targetRate;
+        // Convert to real (today's $) for the cap check.
+        const target_real    = inputs.inflation_adjust && inflationIndex > 0
+          ? target_nominal / inflationIndex
+          : target_nominal;
+        const ceiling_real = vds_real_withdrawal * (1 + vdsCeilingPct / 100);
+        const floor_real   = vds_real_withdrawal * (1 - vdsFloorPct  / 100);
+        let actual_real = target_real;
+        let eventType = null;
+        if (actual_real > ceiling_real) { actual_real = ceiling_real; eventType = 'ceiling'; }
+        if (actual_real < floor_real)   { actual_real = floor_real;   eventType = 'floor';   }
+        // Convert back to nominal.
+        const actual_nominal = inputs.inflation_adjust ? actual_real * inflationIndex : actual_real;
+        if (eventType && vdsEventsForSim) {
+          vdsEventsForSim.push({
+            year: t, type: eventType,
+            target_real, actual_real,
+          });
+        }
+        vds_real_withdrawal = actual_real;
+        current_withdrawal_nominal = actual_nominal;
       }
     }
 
@@ -593,7 +618,8 @@ function runOneSim(ctx) {
 
   depletedFlags[simIndex] = depleted ? 1 : 0;
   depletionYears[simIndex] = depletionYear;
-  if (allGkEvents)         allGkEvents[simIndex] = gkEventsForSim;
+  if (allGkEvents)         allGkEvents[simIndex]  = gkEventsForSim;
+  if (allVdsEvents)        allVdsEvents[simIndex] = vdsEventsForSim;
   if (floorBindingCounts)  floorBindingCounts[simIndex] = sim_floor_binding_count;
 }
 
@@ -622,7 +648,7 @@ function aggregate(ctx) {
     depletedFlags, depletionYears,
     initialWithdrawalRates,
     distributionStrategy, minimumWithdrawalAnnual,
-    allGkEvents, floorBindingCounts,
+    allGkEvents, allVdsEvents, floorBindingCounts,
     sampledYearCounts, year1YearCounts, year1WeightedSum,
     drawnInflation, drawnStockReturn, correlationAssetKey,
     sorMode, sor2008Row,
@@ -989,6 +1015,11 @@ function aggregate(ctx) {
     ? computeGKStatistics(allGkEvents, N, Y)
     : null;
 
+  // VDS aggregate statistics (only when strategy is vanguard_dynamic).
+  const vdsStatistics = distributionStrategy === 'vanguard_dynamic'
+    ? computeVDSStatistics(allVdsEvents, N, Y)
+    : null;
+
   // Year-1 withdrawal — median nominal across sims (will all be very close since year 1 has minimal randomness beyond inflation).
   const year1Values = [];
   for (let s = 0; s < N; s++) year1Values.push(withdrawalByYear[s * Y]);
@@ -1030,6 +1061,7 @@ function aggregate(ctx) {
       real_p75: incomeRealPaths.p75, real_p90: incomeRealPaths.p90,
     },
     gk_statistics: gkStatistics,
+    vds_statistics: vdsStatistics,
     floor_binding_percentiles: floorBindingPercentiles,
   };
 }
@@ -1187,6 +1219,58 @@ function computeGKStatistics(allGkEvents, N, Y) {
     median_year_of_first_cut: firstCutYears.length ? median(firstCutYears) : null,
     pct_cuts_by_year:   pctCutsByYear,
     pct_raises_by_year: pctRaisesByYear,
+  };
+}
+
+function computeVDSStatistics(allVdsEvents, N, Y) {
+  if (!allVdsEvents || allVdsEvents.length === 0) return null;
+  let simsWithFloor   = 0;
+  let simsWithCeiling = 0;
+  const floorPerSim   = new Array(N);
+  const ceilingPerSim = new Array(N);
+  const pctFloorByYear   = new Array(Y).fill(0);
+  const pctCeilingByYear = new Array(Y).fill(0);
+
+  for (let s = 0; s < N; s++) {
+    const events = allVdsEvents[s] || [];
+    let floors = 0, ceilings = 0;
+    const seenFloorYears   = new Set();
+    const seenCeilingYears = new Set();
+    for (const ev of events) {
+      if (ev.type === 'floor') {
+        floors++;
+        if (!seenFloorYears.has(ev.year))   { seenFloorYears.add(ev.year);   pctFloorByYear[ev.year - 1]   += 1; }
+      } else if (ev.type === 'ceiling') {
+        ceilings++;
+        if (!seenCeilingYears.has(ev.year)) { seenCeilingYears.add(ev.year); pctCeilingByYear[ev.year - 1] += 1; }
+      }
+    }
+    floorPerSim[s]   = floors;
+    ceilingPerSim[s] = ceilings;
+    if (floors   > 0) simsWithFloor++;
+    if (ceilings > 0) simsWithCeiling++;
+  }
+
+  for (let y = 0; y < Y; y++) {
+    pctFloorByYear[y]   = (pctFloorByYear[y]   / N) * 100;
+    pctCeilingByYear[y] = (pctCeilingByYear[y] / N) * 100;
+  }
+
+  const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+
+  return {
+    // "floor" = the year-over-year floor cap activated (proposed real fell below
+    //           prior_real × (1 − floor%)), i.e. spending would have dropped
+    //           more than the floor allows.
+    // "ceiling" = the year-over-year ceiling cap activated (proposed real
+    //             exceeded prior_real × (1 + ceiling%)), i.e. spending would
+    //             have risen more than the ceiling allows.
+    pct_sims_with_any_floor:   (simsWithFloor   / N) * 100,
+    pct_sims_with_any_ceiling: (simsWithCeiling / N) * 100,
+    avg_floors_per_sim:        avg(Array.from(floorPerSim)),
+    avg_ceilings_per_sim:      avg(Array.from(ceilingPerSim)),
+    pct_floor_by_year:   pctFloorByYear,
+    pct_ceiling_by_year: pctCeilingByYear,
   };
 }
 

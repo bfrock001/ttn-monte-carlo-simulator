@@ -1513,8 +1513,8 @@ const STRATEGY_DESCRIPTIONS = {
   vanguard_dynamic:
     'Spending floats with the portfolio: each year’s tentative withdrawal is a constant ' +
     'percentage of the current portfolio (implied by Bucket 1 / starting balance), but ' +
-    'year-over-year change is bounded by a ceiling (max raise) and a floor (max cut). ' +
-    'A middle ground between full-percentage and constant-dollar strategies.',
+    'real (today’s $) year-over-year change is bounded by a ceiling (max raise) and a ' +
+    'floor (max cut). A middle ground between full-percentage and constant-dollar strategies.',
 };
 
 /* ============================================================
@@ -1608,19 +1608,19 @@ const STRATEGY_INFO_CONTENT = {
     title: 'Vanguard Dynamic Spending',
     sections: [
       { heading: 'How it works',
-        body: 'Year 1 anchors at Bucket 1 in today’s dollars. The implied target rate = Bucket 1 ÷ starting balance. Each subsequent year, a tentative withdrawal is computed as current portfolio × target rate. That tentative amount is then bounded by a ceiling (no more than +X% over last year) and a floor (no less than −Y% under last year). The final, bounded amount carries forward as the new base for next year’s caps. Buckets 2-N are locked — the strategy is purely portfolio-driven after the year-1 anchor.' },
+        body: 'Year 1 anchors at Bucket 1 in today’s dollars. The implied target rate = Bucket 1 ÷ starting balance. Each subsequent year, a tentative withdrawal is computed as current portfolio × target rate. That tentative amount is then bounded by year-over-year caps applied in REAL (today’s $) terms: a ceiling (no more than +X% real raise) and a floor (no greater than −Y% real cut). Because the caps are in real dollars, the nominal ceiling/floor automatically scales with inflation — in a high-inflation year, the nominal cap is correspondingly higher. The final, bounded amount carries forward in real terms as the new base for next year’s caps. Buckets 2-N are locked — the strategy is purely portfolio-driven after the year-1 anchor.' },
       { heading: 'The research behind it',
         body: 'Vanguard’s Dynamic Spending model (Bruno, Zilbering, et al.) was designed as a middle ground between constant-dollar withdrawals (stable income, full sequence-of-returns risk) and pure percentage-of-portfolio withdrawals (no risk of depletion, but income swings wildly). The caps preserve most of the longevity advantage of percentage-of-portfolio while keeping year-to-year income volatility manageable.' },
       { heading: 'Best for',
         body: 'Retirees comfortable with some income variability who want their spending to participate in market gains and respond to market losses — but not too sharply in either direction. Particularly suited to portfolios with growth potential where letting spending track the portfolio reduces the risk of dying with far more than planned.' },
       { heading: 'What it feels like',
         scenarios: [
-          { type: 'steady', label: 'Steady markets', text: 'Income rises modestly each year as the portfolio grows roughly with returns. The ceiling rarely binds; the floor rarely binds. Spending and portfolio drift together.' },
-          { type: 'bear',   label: 'Bear markets',   text: 'Portfolio drops, so portfolio × target rate falls below last year. The floor activates and limits the cut to −Y% per year. Income glides down rather than plunging. Several consecutive bad years compound modest cuts.' },
-          { type: 'bull',   label: 'Bull markets',   text: 'Portfolio surges, so portfolio × target rate would jump well above last year. The ceiling activates and limits the raise to +X% per year. Income grows steadily without overshooting. The "excess" gain stays invested and compounds.' },
+          { type: 'steady', label: 'Steady markets', text: 'Real income drifts close to the target rate × real portfolio. The ceiling and floor rarely bind. Year-over-year real changes are small.' },
+          { type: 'bear',   label: 'Bear markets',   text: 'Portfolio drops, so target × portfolio would fall sharply in real terms. The floor activates and limits the real cut to −Y% per year. Spending glides down rather than plunging. Several consecutive bad years compound modest real cuts.' },
+          { type: 'bull',   label: 'Bull markets',   text: 'Portfolio surges, so target × portfolio would jump well above last year in real terms. The ceiling activates and limits the real raise to +X% per year. Income grows steadily without overshooting; the "excess" gain stays invested and compounds.' },
         ] },
       { heading: 'Key trade-off',
-        body: 'Unlike Constant Dollar, real purchasing power is not guaranteed — in a stagnant market, spending may erode in real terms because raises are bounded by what the portfolio produces. Unlike Guyton-Klinger, there is no inflation-skip rule and no portfolio-rate-based trigger — caps are purely year-over-year nominal. Simpler than G-K, more responsive than CD.' },
+        body: 'Unlike Constant Dollar, real purchasing power is not guaranteed — at a target rate higher than the portfolio’s sustainable real return, real spending will gradually decline. Unlike Guyton-Klinger, there is no inflation-skip rule and no portfolio-rate-based trigger — the caps are simply on real year-over-year change. Simpler than G-K, more responsive than CD, and the real-dollar caps mean the strategy behaves identically across high- and low-inflation regimes.' },
     ],
   },
 };
@@ -2280,13 +2280,18 @@ function renderIncomeVariabilityReport(results) {
   renderIncomeFanChart(results, currentIncomeMode);
   bindIncomeChartToggle();
   renderIncomeSummaryCards(results);
-  // G-K specific:
-  const isGK = strategy === 'guyton_klinger' && results.gk_statistics;
-  document.getElementById('guardrail-heatmap-card').hidden = !isGK;
+  // Strategy-specific add-ons:
+  //   G-K  → guardrail heatmap + G-K stats table
+  //   VDS  → ceiling/floor heatmap (reuses the same card with relabeled bars)
+  const isGK  = strategy === 'guyton_klinger'   && results.gk_statistics;
+  const isVDS = strategy === 'vanguard_dynamic' && results.vds_statistics;
+  document.getElementById('guardrail-heatmap-card').hidden = !(isGK || isVDS);
   document.getElementById('gk-stats-card').hidden = !isGK;
   if (isGK) {
     renderGuardrailHeatmap(results);
     renderGKStatsTable(results);
+  } else if (isVDS) {
+    renderVDSHeatmap(results);
   } else {
     if (guardrailHeatmapChart) { guardrailHeatmapChart.destroy(); guardrailHeatmapChart = null; }
   }
@@ -2302,6 +2307,7 @@ function renderIVRSubheader(strategy) {
     forgo_inflation: 'With Forgo Inflation Adjustment, income is nearly stable but permanently behind inflation after every loss year.',
     actual_spending: 'With Actual Spending Decline, income grows slowly nominally and declines in real terms — matching how retirees actually spend.',
     guyton_klinger:  'With Guyton-Klinger Guardrails, income varies based on market performance. The chart shows the full range of annual withdrawal outcomes.',
+    vanguard_dynamic:'With Vanguard Dynamic Spending, income floats with the portfolio bounded by the real-dollar ceiling and floor. The chart shows the full range of annual withdrawal outcomes.',
   };
   el.textContent = subheaders[strategy] || '';
 }
@@ -2332,7 +2338,7 @@ function renderIncomeFanChart(results, mode) {
   const p = (key) => mode === 'real' ? paths[`real_${key}`] : paths[key];
   // Whether to show filled bands: skip for near-deterministic strategies (None / CD)
   // where all percentiles overlap closely.
-  const showBands = strategy === 'actual_spending' || strategy === 'guyton_klinger' || strategy === 'forgo_inflation';
+  const showBands = strategy === 'actual_spending' || strategy === 'guyton_klinger' || strategy === 'forgo_inflation' || strategy === 'vanguard_dynamic';
 
   const datasets = [];
   if (showBands) {
@@ -2440,6 +2446,11 @@ function renderGuardrailHeatmap(results) {
   const canvas = document.getElementById('guardrail-heatmap-chart');
   if (!canvas || typeof Chart === 'undefined' || !results.gk_statistics) return;
   if (guardrailHeatmapChart) { guardrailHeatmapChart.destroy(); guardrailHeatmapChart = null; }
+  // Set strategy-appropriate title and intro for G-K mode
+  const titleEl = document.getElementById('guardrail-heatmap-title');
+  const introEl = document.getElementById('guardrail-heatmap-intro');
+  if (titleEl) titleEl.textContent = 'Guardrail Activity by Simulation Year';
+  if (introEl) introEl.textContent = 'Red bars: % of simulations with a spending cut (upper guardrail) that year. Green bars: % with a spending raise (lower guardrail). Taller red bars early indicate years when poor markets most commonly triggered cuts.';
 
   const gk = results.gk_statistics;
   const py = results.inputs_summary.period_years;
@@ -2461,6 +2472,62 @@ function renderGuardrailHeatmap(results) {
           backgroundColor: 'rgba(200, 74, 48, 0.75)', borderColor: CLAY, borderWidth: 1 },
         { label: 'Lower guardrail hit (spending raise)',
           data: gk.pct_raises_by_year,
+          backgroundColor: 'rgba(26, 110, 110, 0.75)', borderColor: TEAL, borderWidth: 1 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11 }, color: INK, boxWidth: 22, boxHeight: 10, padding: 14 } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}% of simulations` } },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Age', color: INK, font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11, weight: '700' } },
+          ticks: { callback: (_, i) => i % 5 === 0 ? labels[i] : '', maxRotation: 0, color: INK, font: { family: "'IBM Plex Mono', ui-monospace, monospace", size: 11 } },
+          grid: { color: 'rgba(20,24,30,0.05)' },
+        },
+        y: {
+          min: 0, max: 100,
+          title: { display: true, text: '% of Simulations', color: INK, font: { family: "'IBM Plex Sans', system-ui, sans-serif", size: 11, weight: '700' } },
+          ticks: { callback: (v) => v + '%', color: INK, font: { family: "'IBM Plex Mono', ui-monospace, monospace", size: 11 } },
+          grid: { color: 'rgba(20,24,30,0.10)' },
+        },
+      },
+    },
+  });
+}
+
+function renderVDSHeatmap(results) {
+  const canvas = document.getElementById('guardrail-heatmap-chart');
+  if (!canvas || typeof Chart === 'undefined' || !results.vds_statistics) return;
+  if (guardrailHeatmapChart) { guardrailHeatmapChart.destroy(); guardrailHeatmapChart = null; }
+
+  const titleEl = document.getElementById('guardrail-heatmap-title');
+  const introEl = document.getElementById('guardrail-heatmap-intro');
+  if (titleEl) titleEl.textContent = 'Ceiling / Floor Activity by Simulation Year';
+  if (introEl) introEl.textContent = 'Red bars: % of simulations where the floor cap activated that year (spending would have dropped more than the floor allows — the cap pulled it up). Green bars: % where the ceiling activated (spending would have risen more than the ceiling allows — the cap pulled it down). Tall red bars early signal bad markets where the floor kept spending from collapsing; tall green bars signal good markets where the ceiling kept the raise from overshooting.';
+
+  const v = results.vds_statistics;
+  const py = results.inputs_summary.period_years;
+  const sa = results.inputs_summary.start_age;
+  const labels = [];
+  for (let i = 0; i < py; i++) labels.push(sa + i + 1);
+
+  const CLAY = '#C84A30';
+  const TEAL = '#1A6E6E';
+  const INK  = '#14181E';
+
+  guardrailHeatmapChart = new Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Floor cap active (cut limited)',
+          data: v.pct_floor_by_year,
+          backgroundColor: 'rgba(200, 74, 48, 0.75)', borderColor: CLAY, borderWidth: 1 },
+        { label: 'Ceiling cap active (raise limited)',
+          data: v.pct_ceiling_by_year,
           backgroundColor: 'rgba(26, 110, 110, 0.75)', borderColor: TEAL, borderWidth: 1 },
       ],
     },
@@ -2518,6 +2585,10 @@ function renderIncomeSummaryCards(results) {
     card4Label = 'Simulations with at least 1 cut';
     card4Value = `${results.gk_statistics.pct_sims_with_any_cut.toFixed(1)}%`;
     card4Sub = 'Upper guardrail triggered at least once';
+  } else if (strategy === 'vanguard_dynamic' && results.vds_statistics) {
+    card4Label = 'Simulations with floor activation';
+    card4Value = `${results.vds_statistics.pct_sims_with_any_floor.toFixed(1)}%`;
+    card4Sub = `Floor cap stopped a deeper cut in at least one year`;
   } else {
     card4Label = 'Real income — final year (median)';
     card4Value = fmtCurrencyShort(paths.real_p50[py - 1]);
@@ -2594,7 +2665,9 @@ function renderIVRCallout(results) {
         ? `Guardrail strategies trade income predictability for portfolio longevity. In these simulations, ${gk.pct_sims_with_any_cut.toFixed(1)}% of scenarios triggered at least one spending cut and ${gk.pct_sims_with_any_raise.toFixed(1)}% triggered at least one raise. Scenarios where the upper guardrail fires more frequently tend to have higher portfolio survival rates — the strategy is working as designed.`
         : 'Guardrail strategies trade income predictability for portfolio longevity. The guardrail rules cut spending in stressed markets and raise spending in strong ones.',
     vanguard_dynamic:
-      'With Vanguard Dynamic Spending, income floats with the portfolio bounded by the year-over-year ceiling and floor. Median income grows in strong-market scenarios (target × portfolio rises but the ceiling smooths it) and gradually declines in poor-market scenarios (the floor caps the cut each year). A middle ground between Constant Dollar’s rigid stability and a pure percentage-of-portfolio strategy’s volatility.',
+      results.vds_statistics
+        ? `With Vanguard Dynamic Spending, income floats with the portfolio bounded by REAL year-over-year caps. In these simulations, ${results.vds_statistics.pct_sims_with_any_ceiling.toFixed(1)}% of scenarios had the ceiling cap activate at least once (smoothing a strong-market raise) and ${results.vds_statistics.pct_sims_with_any_floor.toFixed(1)}% had the floor activate (limiting a bad-market cut). The directional slope of real income is set mainly by the implied target rate vs. real portfolio returns — at rates the portfolio can sustain real income tends to rise; at higher rates real income gradually erodes.`
+        : 'With Vanguard Dynamic Spending, income floats with the portfolio bounded by REAL year-over-year caps. A middle ground between Constant Dollar’s rigid stability and a pure percentage-of-portfolio strategy’s volatility.',
   };
   let text = callouts[strategy] || '';
   if (results.minimum_withdrawal_annual > 0 && results.floor_binding_percentiles) {
