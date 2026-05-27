@@ -9,7 +9,7 @@ const STATE = {
   data: null,            // parsed simba_returns_data.json
   assets: [],            // array of asset records (key, name, ticker, group, ...)
   period: 'modern',      // 'native' | 'postwar' | 'modern' | 'custom'
-  customRange: { start: 1976, end: 2025 }, // reference-table custom range
+  customRange: { start: 1972, end: 2025 }, // reference-table custom range
   sort: { key: 'cagr', dir: 'desc' },
 };
 
@@ -18,7 +18,7 @@ const GROUP_ORDER = ['US Equity', 'International Equity', 'Fixed Income', 'Alter
 const PERIOD_LABELS = {
   native:  { name: 'Full Data Set',          start: 1871, end: 2025 },
   postwar: { name: 'Post-WWII (1946–2025)',  start: 1946, end: 2025 },
-  modern:  { name: 'Modern era (1976–2025)', start: 1976, end: 2025 },
+  modern:  { name: 'Modern era (1972–2025)', start: 1972, end: 2025 },
   custom:  { name: 'Custom range',           start: null, end: null }, // populated from STATE.customRange
 };
 
@@ -111,7 +111,7 @@ function applyDataQualityOverrides(json) {
   json.assets.tips.stats = {
     native:  computeAssetStatsForRangeRaw(json, 'tips', 1871, 2025),
     postwar: computeAssetStatsForRangeRaw(json, 'tips', 1946, 2025),
-    modern:  computeAssetStatsForRangeRaw(json, 'tips', 1976, 2025),
+    modern:  computeAssetStatsForRangeRaw(json, 'tips', 1972, 2025),
   };
 }
 
@@ -670,7 +670,7 @@ const DEFAULTS = {
   period_years: 30,
   n_simulations: 10000,
   historical_period: 'modern',
-  custom_start: 1976,
+  custom_start: 1972,
   custom_end: 2025,
   sequence_of_returns: false,
   sor_force_2008: false,
@@ -699,6 +699,8 @@ const DEFAULTS = {
     lower_guardrail_pct: 4.0,
     upper_adjustment_pct: 10.0,
     lower_adjustment_pct: 10.0,
+    vds_ceiling_pct: 5.0,
+    vds_floor_pct: 2.5,
   },
 };
 
@@ -980,11 +982,14 @@ function renderBuckets() {
 
   // Strategies that lock buckets 2-N (visually + functionally disabled):
   // Constant Dollar uses only bucket 1. Actual Spending Decline carries forward
-  // year-over-year and uses bucket 1 alone for floor/ceiling. Strategies that
-  // drive baseline directly from buckets (None, FI, G-K) keep them editable.
+  // year-over-year and uses bucket 1 alone for floor/ceiling. Vanguard Dynamic
+  // floats with the portfolio after the year-1 anchor — buckets 2-N have no
+  // effect. Strategies that drive baseline directly from buckets (None, FI, G-K)
+  // keep them editable.
   const cdLockBuckets =
     INPUT_STATE.distribution_strategy === 'constant_dollar' ||
-    INPUT_STATE.distribution_strategy === 'actual_spending';
+    INPUT_STATE.distribution_strategy === 'actual_spending' ||
+    INPUT_STATE.distribution_strategy === 'vanguard_dynamic';
 
   INPUT_STATE.buckets.forEach((bucket, idx) => {
     const startYear = idx * 5 + 1;
@@ -1100,6 +1105,9 @@ function strategyBucketNote(strategy) {
   if (strategy === 'guyton_klinger') {
     return 'Acts as a rebase point at this bucket’s transition year. Within the bucket, the prior year’s withdrawal carries forward (with Rule 1 inflation and Rule 2 guardrails). At the transition, the carry-forward value is scaled by (this bucket / prior bucket) so the rebased plan becomes the new baseline.';
   }
+  if (strategy === 'vanguard_dynamic') {
+    return 'Not used under Vanguard Dynamic Spending. Bucket 1 anchors year-1 spending (which implies the target rate); subsequent years float with the portfolio bounded by the ceiling/floor.';
+  }
   return null;
 }
 
@@ -1174,6 +1182,8 @@ function syncSimpleInputsFromState() {
   setVal('gk-lower-guardrail',    INPUT_STATE.strategy_params.lower_guardrail_pct);
   setVal('gk-upper-adjustment',   INPUT_STATE.strategy_params.upper_adjustment_pct);
   setVal('gk-lower-adjustment',   INPUT_STATE.strategy_params.lower_adjustment_pct);
+  setVal('vds-ceiling',           INPUT_STATE.strategy_params.vds_ceiling_pct);
+  setVal('vds-floor',             INPUT_STATE.strategy_params.vds_floor_pct);
 
   // Show/hide custom range pane
   const customWrap = document.getElementById('custom-range');
@@ -1186,12 +1196,15 @@ function syncSimpleInputsFromState() {
   if (aspParams) aspParams.hidden = INPUT_STATE.distribution_strategy !== 'actual_spending';
   const gkParams = document.getElementById('params-guyton-klinger');
   if (gkParams) gkParams.hidden = INPUT_STATE.distribution_strategy !== 'guyton_klinger';
+  const vdsParams = document.getElementById('params-vanguard-dynamic');
+  if (vdsParams) vdsParams.hidden = INPUT_STATE.distribution_strategy !== 'vanguard_dynamic';
   // Uniform-expense toggle visibility matches strategy
   const uniformRow = document.getElementById('uniform-expense-row');
   if (uniformRow) {
     uniformRow.hidden =
       INPUT_STATE.distribution_strategy === 'constant_dollar' ||
-      INPUT_STATE.distribution_strategy === 'actual_spending';
+      INPUT_STATE.distribution_strategy === 'actual_spending' ||
+      INPUT_STATE.distribution_strategy === 'vanguard_dynamic';
   }
 }
 
@@ -1320,6 +1333,8 @@ function bindInputEvents() {
   document.getElementById('gk-lower-guardrail')?.addEventListener('input',  () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
   document.getElementById('gk-upper-adjustment')?.addEventListener('input', () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
   document.getElementById('gk-lower-adjustment')?.addEventListener('input', () => { updateGKPreview(); validateGKInputs(); refreshRunButtonState(); });
+  document.getElementById('vds-ceiling')?.addEventListener('input', () => { updateVDSPreview(); validateVDSInputs(); refreshRunButtonState(); });
+  document.getElementById('vds-floor')?.addEventListener('input',   () => { updateVDSPreview(); validateVDSInputs(); refreshRunButtonState(); });
   const minEl = document.getElementById('minimum-withdrawal');
   if (minEl) {
     attachCurrencyHandlers(minEl, (raw) => {
@@ -1344,8 +1359,9 @@ function refreshAllDerived() {
   refreshNetDraw();
   refreshSorUi();
   // Strategy live previews — update whenever underlying inputs (bucket 1, balance, income, ages) change.
-  if (INPUT_STATE.distribution_strategy === 'actual_spending') updateActualSpendingPreview();
-  if (INPUT_STATE.distribution_strategy === 'guyton_klinger')  updateGKPreview();
+  if (INPUT_STATE.distribution_strategy === 'actual_spending')  updateActualSpendingPreview();
+  if (INPUT_STATE.distribution_strategy === 'guyton_klinger')   updateGKPreview();
+  if (INPUT_STATE.distribution_strategy === 'vanguard_dynamic') updateVDSPreview();
   refreshRunButtonState();
 }
 
@@ -1377,7 +1393,7 @@ function refreshConstrainingWarning() {
   if (period === 'custom') start = INPUT_STATE.custom_start;
   else if (period === 'native')  start = 1871;
   else if (period === 'postwar') start = 1946;
-  else if (period === 'modern')  start = 1976;
+  else if (period === 'modern')  start = 1972;
 
   // Find selected asset with latest native_start > period start
   let worst = null;
@@ -1494,6 +1510,11 @@ const STRATEGY_DESCRIPTIONS = {
     'When breached, spending adjusts up or down by the adjustment percentage. Accepts ' +
     'occasional income adjustments in exchange for higher normal-year withdrawals and ' +
     'improved portfolio longevity.',
+  vanguard_dynamic:
+    'Spending floats with the portfolio: each year’s tentative withdrawal is a constant ' +
+    'percentage of the current portfolio (implied by Bucket 1 / starting balance), but ' +
+    'year-over-year change is bounded by a ceiling (max raise) and a floor (max cut). ' +
+    'A middle ground between full-percentage and constant-dollar strategies.',
 };
 
 /* ============================================================
@@ -1583,6 +1604,25 @@ const STRATEGY_INFO_CONTENT = {
         body: 'In severe or prolonged bear markets, the upper guardrail may fire repeatedly, producing meaningful cumulative income cuts. Research shows this strategy can require cuts exceeding 40% of original income in the worst historical sequences. A minimum withdrawal floor helps protect against this.' },
     ],
   },
+  vanguard_dynamic: {
+    title: 'Vanguard Dynamic Spending',
+    sections: [
+      { heading: 'How it works',
+        body: 'Year 1 anchors at Bucket 1 in today’s dollars. The implied target rate = Bucket 1 ÷ starting balance. Each subsequent year, a tentative withdrawal is computed as current portfolio × target rate. That tentative amount is then bounded by a ceiling (no more than +X% over last year) and a floor (no less than −Y% under last year). The final, bounded amount carries forward as the new base for next year’s caps. Buckets 2-N are locked — the strategy is purely portfolio-driven after the year-1 anchor.' },
+      { heading: 'The research behind it',
+        body: 'Vanguard’s Dynamic Spending model (Bruno, Zilbering, et al.) was designed as a middle ground between constant-dollar withdrawals (stable income, full sequence-of-returns risk) and pure percentage-of-portfolio withdrawals (no risk of depletion, but income swings wildly). The caps preserve most of the longevity advantage of percentage-of-portfolio while keeping year-to-year income volatility manageable.' },
+      { heading: 'Best for',
+        body: 'Retirees comfortable with some income variability who want their spending to participate in market gains and respond to market losses — but not too sharply in either direction. Particularly suited to portfolios with growth potential where letting spending track the portfolio reduces the risk of dying with far more than planned.' },
+      { heading: 'What it feels like',
+        scenarios: [
+          { type: 'steady', label: 'Steady markets', text: 'Income rises modestly each year as the portfolio grows roughly with returns. The ceiling rarely binds; the floor rarely binds. Spending and portfolio drift together.' },
+          { type: 'bear',   label: 'Bear markets',   text: 'Portfolio drops, so portfolio × target rate falls below last year. The floor activates and limits the cut to −Y% per year. Income glides down rather than plunging. Several consecutive bad years compound modest cuts.' },
+          { type: 'bull',   label: 'Bull markets',   text: 'Portfolio surges, so portfolio × target rate would jump well above last year. The ceiling activates and limits the raise to +X% per year. Income grows steadily without overshooting. The "excess" gain stays invested and compounds.' },
+        ] },
+      { heading: 'Key trade-off',
+        body: 'Unlike Constant Dollar, real purchasing power is not guaranteed — in a stagnant market, spending may erode in real terms because raises are bounded by what the portfolio produces. Unlike Guyton-Klinger, there is no inflation-skip rule and no portfolio-rate-based trigger — caps are purely year-over-year nominal. Simpler than G-K, more responsive than CD.' },
+    ],
+  },
 };
 
 function buildModalContent(strategy) {
@@ -1641,14 +1681,16 @@ function handleStrategyChange() {
   document.getElementById('strategy-description').textContent = STRATEGY_DESCRIPTIONS[strategy] || '';
   document.getElementById('params-actual-spending').hidden = strategy !== 'actual_spending';
   document.getElementById('params-guyton-klinger').hidden = strategy !== 'guyton_klinger';
-  // Hide the uniform-expense toggle for CD/AS — buckets 2-N are locked regardless
+  document.getElementById('params-vanguard-dynamic').hidden = strategy !== 'vanguard_dynamic';
+  // Hide the uniform-expense toggle for CD/AS/VDS — buckets 2-N are locked regardless
   // for those strategies, so the toggle has no effect there.
   const uniformRow = document.getElementById('uniform-expense-row');
   if (uniformRow) {
-    uniformRow.hidden = (strategy === 'constant_dollar' || strategy === 'actual_spending');
+    uniformRow.hidden = (strategy === 'constant_dollar' || strategy === 'actual_spending' || strategy === 'vanguard_dynamic');
   }
-  if (strategy === 'actual_spending') updateActualSpendingPreview();
-  if (strategy === 'guyton_klinger')  updateGKPreview();
+  if (strategy === 'actual_spending')  updateActualSpendingPreview();
+  if (strategy === 'guyton_klinger')   updateGKPreview();
+  if (strategy === 'vanguard_dynamic') updateVDSPreview();
   renderBuckets(); // re-render to add/remove bucket-2+ strategy callouts
   // If the info modal is open, refresh its content for the new strategy
   const modal = document.getElementById('strategy-info-modal');
@@ -1753,6 +1795,46 @@ function validateGKInputs() {
   return valid;
 }
 
+function updateVDSPreview() {
+  const ceiling = parseFloat(document.getElementById('vds-ceiling').value);
+  const floor   = parseFloat(document.getElementById('vds-floor').value);
+  if (Number.isFinite(ceiling)) INPUT_STATE.strategy_params.vds_ceiling_pct = ceiling;
+  if (Number.isFinite(floor))   INPUT_STATE.strategy_params.vds_floor_pct   = floor;
+
+  const balance = INPUT_STATE.initial_balance;
+  const year1   = getBucket1AnnualExpense();
+  if (!balance || !year1) {
+    document.getElementById('vds-preview-rate').textContent    = '—';
+    document.getElementById('vds-preview-ceiling').textContent = '—';
+    document.getElementById('vds-preview-floor').textContent   = '—';
+    return;
+  }
+  const targetRate = (year1 / balance) * 100;
+  document.getElementById('vds-preview-rate').textContent    = `${targetRate.toFixed(2)}%`;
+  document.getElementById('vds-preview-ceiling').textContent =
+    Number.isFinite(ceiling) ? formatCurrency(year1 * (1 + ceiling / 100)) : '—';
+  document.getElementById('vds-preview-floor').textContent   =
+    Number.isFinite(floor)   ? formatCurrency(year1 * (1 - floor   / 100)) : '—';
+}
+
+function validateVDSInputs() {
+  if (INPUT_STATE.distribution_strategy !== 'vanguard_dynamic') return true;
+  const c = INPUT_STATE.strategy_params.vds_ceiling_pct;
+  const f = INPUT_STATE.strategy_params.vds_floor_pct;
+  let valid = true;
+  const ce = document.getElementById('vds-ceiling-error');
+  const fe = document.getElementById('vds-floor-error');
+  if (!Number.isFinite(c) || c < 1.0 || c > 15.0) {
+    ce.textContent = 'Ceiling must be between 1.0% and 15.0% per year';
+    ce.hidden = false; valid = false;
+  } else { ce.hidden = true; }
+  if (!Number.isFinite(f) || f < 0.5 || f > 10.0) {
+    fe.textContent = 'Floor must be between 0.5% and 10.0% per year';
+    fe.hidden = false; valid = false;
+  } else { fe.hidden = true; }
+  return valid;
+}
+
 function handleMinimumWithdrawalChange() {
   // currency-input already has attachCurrencyHandlers; this fires on blur after parse.
   const bucket1 = getBucket1AnnualExpense();
@@ -1794,6 +1876,13 @@ function computeValidation() {
     if (Number.isFinite(u) && Number.isFinite(l) && (u - l) < 1.0) errors.push('Guardrail gap < 1.0%.');
     if (!Number.isFinite(ua) || ua < 5 || ua > 20) errors.push('Upper adjustment out of range.');
     if (!Number.isFinite(la) || la < 5 || la > 20) errors.push('Lower adjustment out of range.');
+  }
+  // Vanguard Dynamic param validity
+  if (INPUT_STATE.distribution_strategy === 'vanguard_dynamic') {
+    const c = INPUT_STATE.strategy_params.vds_ceiling_pct;
+    const f = INPUT_STATE.strategy_params.vds_floor_pct;
+    if (!Number.isFinite(c) || c < 1.0 || c > 15.0) errors.push('VDS ceiling out of range.');
+    if (!Number.isFinite(f) || f < 0.5 || f > 10.0) errors.push('VDS floor out of range.');
   }
   const disc = document.getElementById('disclaimer-check');
   if (!disc || !disc.checked) errors.push('Acknowledge the disclaimer.');
@@ -2120,7 +2209,7 @@ function renderResultsSummaryText(results) {
   const sm  = results.success_metrics;
   const sims = inp.n_simulations.toLocaleString('en-US');
   const initBal = formatCurrency(inp.initial_balance);
-  // Parse historical period e.g. "1976-2025 (modern era)" → start/end year
+  // Parse historical period e.g. "1972-2025 (modern era)" → start/end year
   const m = String(inp.historical_period).match(/(\d{4})\D+(\d{4})/);
   const startYear = m ? m[1] : '—';
   const endYear   = m ? m[2] : '—';
@@ -2504,6 +2593,8 @@ function renderIVRCallout(results) {
       gk
         ? `Guardrail strategies trade income predictability for portfolio longevity. In these simulations, ${gk.pct_sims_with_any_cut.toFixed(1)}% of scenarios triggered at least one spending cut and ${gk.pct_sims_with_any_raise.toFixed(1)}% triggered at least one raise. Scenarios where the upper guardrail fires more frequently tend to have higher portfolio survival rates — the strategy is working as designed.`
         : 'Guardrail strategies trade income predictability for portfolio longevity. The guardrail rules cut spending in stressed markets and raise spending in strong ones.',
+    vanguard_dynamic:
+      'With Vanguard Dynamic Spending, income floats with the portfolio bounded by the year-over-year ceiling and floor. Median income grows in strong-market scenarios (target × portfolio rises but the ceiling smooths it) and gradually declines in poor-market scenarios (the floor caps the cut each year). A middle ground between Constant Dollar’s rigid stability and a pure percentage-of-portfolio strategy’s volatility.',
   };
   let text = callouts[strategy] || '';
   if (results.minimum_withdrawal_annual > 0 && results.floor_binding_percentiles) {

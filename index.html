@@ -129,7 +129,7 @@
             <select id="historical-period" class="select">
               <option value="native">Full Data Set — Native data per asset (1871–2025)</option>
               <option value="postwar">Post-WWII — 1946 to 2025</option>
-              <option value="modern" selected>Modern era — 1976 to 2025 (recommended)</option>
+              <option value="modern" selected>Modern era — 1972 to 2025 (recommended)</option>
               <option value="custom">Custom range — Select start and end year</option>
             </select>
             <div id="custom-range" class="custom-range" hidden>
@@ -208,6 +208,7 @@
               <option value="forgo_inflation">Forgo Inflation Adjustment (T. Rowe Price)</option>
               <option value="actual_spending">Actual Spending Decline (EBRI / Blanchett)</option>
               <option value="guyton_klinger">Guyton-Klinger Guardrails</option>
+              <option value="vanguard_dynamic">Vanguard Dynamic Spending</option>
             </select>
             <p id="strategy-description" class="field-note"></p>
           </div>
@@ -301,6 +302,41 @@
               <div class="preview-row"><span>Year 1 effective rate (net)</span><span id="gk-preview-rate">&mdash;</span></div>
               <div class="preview-row"><span>Upper fires when portfolio falls to</span><span id="gk-preview-upper-portfolio">&mdash;</span></div>
               <div class="preview-row"><span>Lower fires when portfolio grows to</span><span id="gk-preview-lower-portfolio">&mdash;</span></div>
+            </div>
+          </div>
+
+          <!-- Vanguard Dynamic Spending parameter panel -->
+          <div id="params-vanguard-dynamic" class="strategy-params" hidden>
+            <div class="field-row">
+              <div class="field">
+                <label class="field-label small" for="vds-ceiling">Ceiling (max raise)</label>
+                <div class="suffix-wrap">
+                  <input type="number" id="vds-ceiling" class="num-input" min="1.0" max="15.0" step="0.5" value="5.0" />
+                  <span class="suffix">% / year</span>
+                </div>
+              </div>
+              <div class="field">
+                <label class="field-label small" for="vds-floor">Floor (max cut)</label>
+                <div class="suffix-wrap">
+                  <input type="number" id="vds-floor" class="num-input" min="0.5" max="10.0" step="0.5" value="2.5" />
+                  <span class="suffix">% / year</span>
+                </div>
+              </div>
+            </div>
+            <p id="vds-ceiling-error" class="field-error" hidden></p>
+            <p id="vds-floor-error" class="field-error" hidden></p>
+
+            <div class="info-box">
+              <strong>i</strong>
+              <p>
+                Each year a tentative withdrawal is computed as <em>current portfolio &times; target rate</em>, where the target rate is implied by Bucket&nbsp;1 &divide; starting balance. The ceiling caps year-over-year nominal increases; the floor caps year-over-year nominal decreases. Spending floats with the portfolio but never moves more than these bounds in a single year.
+              </p>
+            </div>
+
+            <div class="preview-box">
+              <div class="preview-row"><span>Implied target rate</span><span id="vds-preview-rate">&mdash;</span></div>
+              <div class="preview-row"><span>Year 2 ceiling (max raise)</span><span id="vds-preview-ceiling">&mdash;</span></div>
+              <div class="preview-row"><span>Year 2 floor (max cut)</span><span id="vds-preview-floor">&mdash;</span></div>
             </div>
           </div>
         </section>
@@ -616,7 +652,7 @@
         <div class="period-toggle" role="tablist" aria-label="Historical period">
           <button class="period-btn" role="tab" data-period="native" aria-selected="false">Full Data Set</button>
           <button class="period-btn" role="tab" data-period="postwar" aria-selected="false">Post-WWII (1946–2025)</button>
-          <button class="period-btn is-active" role="tab" data-period="modern" aria-selected="true">Modern era (1976–2025)</button>
+          <button class="period-btn is-active" role="tab" data-period="modern" aria-selected="true">Modern era (1972–2025)</button>
           <button class="period-btn" role="tab" data-period="custom" aria-selected="false">Custom range</button>
         </div>
       </header>

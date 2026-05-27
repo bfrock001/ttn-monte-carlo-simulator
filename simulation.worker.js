@@ -21,7 +21,7 @@
 const PERIOD_DEFS = {
   native:  { start: 1871, end: 2025 },
   postwar: { start: 1946, end: 2025 },
-  modern:  { start: 1976, end: 2025 },
+  modern:  { start: 1972, end: 2025 },
 };
 
 self.onmessage = (e) => {
@@ -87,6 +87,10 @@ function runSimulation(inputs, data) {
   const fallbackAdjustmentPct  = sp.adjustment_pct           != null ? sp.adjustment_pct           : 10.0;
   const gkUpperAdjustmentPct   = sp.upper_adjustment_pct     != null ? sp.upper_adjustment_pct     : fallbackAdjustmentPct;
   const gkLowerAdjustmentPct   = sp.lower_adjustment_pct     != null ? sp.lower_adjustment_pct     : fallbackAdjustmentPct;
+  // Vanguard Dynamic Spending caps year-over-year nominal change in either direction.
+  // Defaults match the standard Vanguard formulation: +5% ceiling, −2.5% floor.
+  const vdsCeilingPct          = sp.vds_ceiling_pct          != null ? sp.vds_ceiling_pct          : 5.0;
+  const vdsFloorPct            = sp.vds_floor_pct            != null ? sp.vds_floor_pct            : 2.5;
 
   // Per-sim storage. We need all balances & returns to compute percentiles
   // and per-sim stats. Use typed arrays for memory efficiency.
@@ -134,6 +138,8 @@ function runSimulation(inputs, data) {
       lowerGuardrailPct,
       gkUpperAdjustmentPct,
       gkLowerAdjustmentPct,
+      vdsCeilingPct,
+      vdsFloorPct,
       allGkEvents,
       floorBindingCounts,
       withdrawalByYear,
@@ -233,6 +239,7 @@ function runOneSim(ctx) {
     simIndex, inputs, eligibleRows, sorMode, sor2008Row, Y,
     distributionStrategy, minimumWithdrawalAnnual,
     realSpendingDeclinePct, upperGuardrailPct, lowerGuardrailPct, gkUpperAdjustmentPct, gkLowerAdjustmentPct,
+    vdsCeilingPct, vdsFloorPct,
     allGkEvents, floorBindingCounts,
     withdrawalByYear, cumInflationIdx, initialWithdrawalRates,
     nominalBalances, realBalances, annualReturnsPct, tbillReturnsPct, inflationsPct,
@@ -375,6 +382,15 @@ function runOneSim(ctx) {
     //                           Rule 2 guardrails. Post-guardrail value carries forward.
     //                           Upper cut suspended when years_remaining ≤ 15. Lower raise
     //                           always active.
+    //      • vanguard_dynamic — Vanguard Dynamic Spending. Year 1 anchor = bucket[1]; implies
+    //                           target_rate = bucket[1] / initial_balance. Year t ≥ 2:
+    //                             target_t = current_balance × target_rate
+    //                             ceiling_t = prior_actual × (1 + vds_ceiling / 100)
+    //                             floor_t   = prior_actual × (1 − vds_floor / 100)
+    //                             actual_t  = clamp(target_t, floor_t, ceiling_t), carries forward.
+    //                           Spending floats with portfolio value but year-over-year change
+    //                           is bounded. Buckets 2-N are locked (the strategy is purely
+    //                           portfolio-driven after the year-1 anchor).
 
     // eff_inflation_index is the cumulative inflation through year t-1 with skipped
     // years deducted (Rule 1). At year 1 it equals 1.0 (today's $). End-of-year update
@@ -480,6 +496,29 @@ function runOneSim(ctx) {
         } else {
           gk_real_withdrawal = proposed_nominal;
         }
+      }
+    } else if (distributionStrategy === 'vanguard_dynamic') {
+      // Vanguard Dynamic Spending. The target each year is a constant
+      // percentage of the *current* portfolio (target_rate is implied by
+      // bucket[1] / initial_balance), bounded by a year-over-year ceiling
+      // and floor. Year 1 anchors at bucket[1]; thereafter spending floats
+      // with the portfolio but is smoothed by the caps.
+
+      if (t === 1) {
+        const bucket1 = bucketExpenseForYear(1);
+        current_withdrawal_nominal = bucket1;
+      } else {
+        const bucket1 = bucketExpenseForYear(1);
+        const targetRate = inputs.initial_balance > 0 ? bucket1 / inputs.initial_balance : 0;
+        const target  = balance * targetRate;
+        const ceiling = current_withdrawal_nominal * (1 + vdsCeilingPct / 100);
+        const floor   = current_withdrawal_nominal * (1 - vdsFloorPct  / 100);
+        // Clamp target into [floor, ceiling]. If portfolio has grown sharply
+        // we hit the ceiling; if it dropped sharply we hit the floor.
+        let proposed = target;
+        if (proposed > ceiling) proposed = ceiling;
+        if (proposed < floor)   proposed = floor;
+        current_withdrawal_nominal = proposed;
       }
     }
 
