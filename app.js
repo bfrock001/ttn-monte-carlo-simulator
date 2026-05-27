@@ -1621,6 +1621,25 @@ const STRATEGY_INFO_CONTENT = {
         ] },
       { heading: 'Key trade-off',
         body: 'Unlike Constant Dollar, real purchasing power is not guaranteed — at a target rate higher than the portfolio’s sustainable real return, real spending will gradually decline. Unlike Guyton-Klinger, there is no inflation-skip rule and no portfolio-rate-based trigger — the caps are simply on real year-over-year change. Simpler than G-K, more responsive than CD, and the real-dollar caps mean the strategy behaves identically across high- and low-inflation regimes.' },
+      { heading: 'Worked example — 6-year walkthrough',
+        intro: 'Assumes a $1,000,000 starting portfolio, 5% target rate (so Bucket 1 = $50,000), and 0% inflation so real = nominal. Sequencing each year: withdraw first, then apply that year’s return. Cap test compares target ÷ prior_withdrawal (not the market return) — a strong market year can still trigger the floor if prior was high enough.',
+        table: {
+          columns: ['Year', 'Return', 'Start', 'Target (5%)', 'Floor (−2.5%)', 'Ceiling (+5%)', 'Cap', 'Withdrawal', 'End'],
+          rows: [
+            ['1', '−20%', '$1,000,000', 'anchor',  '—',        '—',         '—',          '$50,000', '$760,000'],
+            ['2', '+20%', '$760,000',   '$38,000', '$48,750',  '$52,500',   'floor',      '$48,750', '$853,500'],
+            ['3', '+40%', '$853,500',   '$42,675', '$47,531',  '$51,188',   'floor',      '$47,531', '$1,128,357'],
+            ['4', '0%',   '$1,128,357', '$56,418', '$46,343',  '$49,907',   'ceiling',    '$49,907', '$1,078,450'],
+            ['5', '0%',   '$1,078,450', '$53,923', '$48,659',  '$52,402',   'ceiling',    '$52,402', '$1,026,048'],
+            ['6', '0%',   '$1,026,048', '$51,302', '$51,092',  '$55,022',   'none',       '$51,302', '$974,746'],
+          ],
+        },
+        notes: [
+          'Year 1 is the anchor — no cap test. The implicit target rate ($50K ÷ $1M = 5%) is what drives every subsequent year’s target.',
+          'Year 3 illustrates the most common confusion: a +40% market year still triggers the floor cap because target ($42,675) is below prior × 0.975 ($47,531). The cap test compares target to prior, not to the return.',
+          'In the actual implementation, the cap test runs in real (today’s $) dollars. With nonzero inflation, the nominal ceiling/floor automatically scales — at 10% inflation, the +5% real ceiling becomes roughly +15.5% nominal.',
+        ],
+      },
     ],
   },
 };
@@ -1635,6 +1654,34 @@ function buildModalContent(strategy) {
     if (section.body) {
       const cls = section.is_warning ? 'modal-warning' : '';
       html += `<p class="${cls}">${escapeHtml(section.body)}</p>`;
+    }
+    if (section.intro) {
+      html += `<p>${escapeHtml(section.intro)}</p>`;
+    }
+    if (section.table) {
+      const tbl = section.table;
+      html += `<div class="modal-table-wrap"><table class="modal-table"><thead><tr>`;
+      tbl.columns.forEach((c) => { html += `<th>${escapeHtml(c)}</th>`; });
+      html += `</tr></thead><tbody>`;
+      tbl.rows.forEach((row) => {
+        html += `<tr>`;
+        row.forEach((cell, i) => {
+          // Highlight the "Cap" column when it contains 'floor' or 'ceiling'
+          let cls = i === 0 ? 'modal-table__year' : 'modal-table__num';
+          const lower = String(cell).toLowerCase();
+          if (lower === 'floor')   cls = 'modal-table__cap modal-table__cap--floor';
+          if (lower === 'ceiling') cls = 'modal-table__cap modal-table__cap--ceiling';
+          if (lower === 'none')    cls = 'modal-table__cap modal-table__cap--none';
+          html += `<td class="${cls}">${escapeHtml(cell)}</td>`;
+        });
+        html += `</tr>`;
+      });
+      html += `</tbody></table></div>`;
+    }
+    if (section.notes) {
+      html += `<ul class="modal-notes">`;
+      section.notes.forEach((n) => { html += `<li>${escapeHtml(n)}</li>`; });
+      html += `</ul>`;
     }
     if (section.scenarios) {
       section.scenarios.forEach((sc) => {
