@@ -2084,21 +2084,49 @@ function injectPrintOnlyContent() {
 }
 
 function downloadPDF() {
-  if (!lastResults) return;
+  if (!lastResults) {
+    showExportToast('Run a simulation first');
+    return;
+  }
   const label = (getExportLabelValue() || getAutoDefaultLabel(lastResults)).trim();
   const prevTitle = document.title;
   document.title = `ttn-${slugForFilename(label)}-${todayStamp()}`;
   injectPrintOnlyContent();
   document.body.classList.add('is-printing');
-  // afterprint fires when the dialog closes (whether user saved or cancelled).
+
+  // Show immediate user feedback. If window.print() is silently no-op'd by the
+  // environment (some embedded webviews, locked-down kiosks, etc.) the user
+  // would otherwise see nothing happen.
+  showExportToast('Opening print dialog… choose "Save as PDF"');
+
+  // afterprint fires when the dialog closes (saved or cancelled). Some
+  // environments don't fire it (e.g. when print() is blocked). Add a
+  // safety-timer cleanup so the page never gets stuck in is-printing state.
+  let cleanedUp = false;
   const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     document.body.classList.remove('is-printing');
     document.title = prevTitle;
     document.querySelectorAll('#dev-results .print-only').forEach((el) => el.remove());
     window.removeEventListener('afterprint', cleanup);
   };
   window.addEventListener('afterprint', cleanup);
-  window.print();
+  // Fallback cleanup after 60s (long enough that even slow human review of
+  // the print preview completes first).
+  const fallbackTimer = setTimeout(cleanup, 60000);
+
+  try {
+    window.print();
+    // If we reach here synchronously without throwing, the dialog either
+    // opened modally or the environment no-op'd it. Either way the
+    // afterprint listener (or fallback timer) will handle cleanup.
+  } catch (e) {
+    clearTimeout(fallbackTimer);
+    cleanup();
+    showExportToast('Print blocked — try right-click → Print');
+    console.error('downloadPDF: window.print() threw', e);
+  }
 }
 
 function bindExportButtons() {
