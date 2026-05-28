@@ -747,6 +747,7 @@ function initInputPanel() {
   // Event bindings
   bindInputEvents();
   bindStrategyModal();
+  bindExportButtons();
 
   // Initial validation pass
   refreshAllDerived();
@@ -1760,6 +1761,366 @@ function bindStrategyModal() {
     if (e.target.id === 'strategy-info-modal') closeStrategyModal();
   });
 }
+
+/* ============================================================
+   Scenario Export (PDF + CSV + Clipboard)
+   ============================================================
+   Produces a one-row CSV per the producer contract in the project plan
+   (file: ~/.claude/plans/buzzing-fluttering-kettle.md). Magic
+   schema_version tag in column 1 lets the future comparison tool detect
+   data rows reliably even when users paste fragments from clipboards
+   or text editors. RFC 4180 escape rules; CRLF line endings.
+
+   PDF export uses the browser's native print-to-PDF via @media print
+   stylesheet. No third-party PDF library — keeps this app dependency-free.
+
+   All export operations require `lastResults` to be populated (i.e. a
+   simulation has completed). UI gates the buttons until then.
+   ============================================================ */
+
+const SCHEMA_VERSION = 'ttn-mcsim-csv-v1';
+
+// Internal strategy id -> human-readable label for the CSV strategy column
+// (we keep the lowercase id in CSV per the producer contract, but use these
+// labels in the PDF and auto-default scenario label).
+const STRATEGY_DISPLAY_NAMES = {
+  none:             'None — Use Expense Schedule',
+  constant_dollar:  'Constant Dollar (Bengen 4% rule)',
+  forgo_inflation:  'Forgo Inflation Adjustment',
+  actual_spending:  'Actual Spending Decline',
+  guyton_klinger:   'Guyton-Klinger Guardrails',
+  vanguard_dynamic: 'Vanguard Dynamic Spending',
+};
+
+// Short display names used inside the auto-default scenario label so the
+// label fits in a CSV cell / file name. Different from the modal title above.
+const STRATEGY_SHORT_NAMES = {
+  none:             'Expense Schedule',
+  constant_dollar:  'Constant Dollar',
+  forgo_inflation:  'Forgo Inflation',
+  actual_spending:  'Actual Spending',
+  guyton_klinger:   'Guyton-Klinger',
+  vanguard_dynamic: 'Vanguard Dynamic',
+};
+
+function getAllocationSummary() {
+  // "60% Large Cap Blend / 40% Intermediate Treasury" — uses the asset's
+  // display name from STATE.data.assets, not the internal key.
+  const parts = [];
+  for (const a of INPUT_STATE.allocations) {
+    if (!a.key || !(a.pct > 0)) continue;
+    const meta = STATE.data && STATE.data.assets && STATE.data.assets[a.key];
+    const name = (meta && meta.name) || a.key;
+    parts.push(`${a.pct}% ${name}`);
+  }
+  return parts.join(' / ');
+}
+
+function getAutoDefaultLabel(results) {
+  // "Constant Dollar 4.0% — modern era" style fallback when the user
+  // hasn't typed a label of their own.
+  const strat = STRATEGY_SHORT_NAMES[INPUT_STATE.distribution_strategy] || INPUT_STATE.distribution_strategy;
+  const swr = (results && Number.isFinite(results.year1_withdrawal_rate_pct))
+    ? results.year1_withdrawal_rate_pct.toFixed(2) + '%'
+    : '';
+  // Pull the period descriptor from the historical_period string,
+  // e.g. "1972-2025 (modern era)" -> "modern era".
+  const periodMatch = String(results?.inputs_summary?.historical_period || '').match(/\(([^)]+)\)/);
+  const periodLabel = periodMatch ? periodMatch[1] : '';
+  const parts = [strat];
+  if (swr) parts.push(swr);
+  let out = parts.join(' ');
+  if (periodLabel) out += ` — ${periodLabel}`;
+  return out;
+}
+
+function buildExportRow(results, userLabel) {
+  // Snapshot the producer contract's 21 columns. Source mappings match
+  // the table in the plan exactly. All money values are RAW numbers
+  // (no $, no commas, no percentage scaling — consumer-side formatting).
+  const label = (userLabel && String(userLabel).trim()) || getAutoDefaultLabel(results);
+  const inp = INPUT_STATE;
+  const inpSum = results.inputs_summary;
+  const stats = results.statistics || {};
+  const incomePaths = results.income_percentile_paths || {};
+
+  // avg_annual_real_spending = mean of the p50 real-income path
+  const realP50 = Array.isArray(incomePaths.real_p50) ? incomePaths.real_p50 : [];
+  const avgAnnualRealSpending = realP50.length
+    ? realP50.reduce((s, v) => s + v, 0) / realP50.length
+    : 0;
+
+  // lifetime_real_spending_p10/p50/p90 = sum of each real-income path
+  const sumOf = (arr) => Array.isArray(arr) && arr.length ? arr.reduce((s, v) => s + v, 0) : 0;
+  const lifetimeP10 = sumOf(incomePaths.real_p10);
+  const lifetimeP50 = sumOf(incomePaths.real_p50);
+  const lifetimeP90 = sumOf(incomePaths.real_p90);
+
+  return {
+    schema_version:               SCHEMA_VERSION,
+    label:                        label,
+    exported_at:                  new Date().toISOString(),
+    strategy:                     inp.distribution_strategy,
+    historical_period:            inpSum.historical_period,
+    period_years:                 inp.period_years,
+    initial_balance:              inp.initial_balance,
+    starting_rate_pct:            +(results.year1_withdrawal_rate_pct || 0),
+    success_rate_pct:             +(results.success_metrics?.success_rate_pct || 0),
+    ending_balance_real_p10:      +(stats.p10?.ending_balance_real || 0),
+    ending_balance_real_p50:      +(stats.p50?.ending_balance_real || 0),
+    ending_balance_real_p90:      +(stats.p90?.ending_balance_real || 0),
+    avg_annual_real_spending:     avgAnnualRealSpending,
+    lifetime_real_spending_p10:   lifetimeP10,
+    lifetime_real_spending_p50:   lifetimeP50,
+    lifetime_real_spending_p90:   lifetimeP90,
+    ss_amount:                    inp.ss?.amount || 0,
+    pension_amount:               inp.pension?.amount || 0,
+    annuity_amount:               inp.annuity?.amount || 0,
+    sor_active:                   !!inp.sequence_of_returns,
+    sor_force_2008:               !!inp.sor_force_2008,
+    allocation_summary:           getAllocationSummary(),
+  };
+}
+
+function formatCsvField(value) {
+  // RFC 4180 escape:
+  //   * Quote-wrap if the value contains comma, quote, CR, or LF.
+  //   * Double any embedded quote inside a quoted field.
+  //   * Booleans render as lowercase true/false (no quotes).
+  //   * Numbers render with toString — no $/comma formatting.
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  const str = String(value);
+  if (/[,"\r\n]/.test(str)) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+function buildCsvString(rowObj) {
+  // Producer contract: header row always emitted, CRLF line endings.
+  const cols = Object.keys(rowObj);
+  const header = cols.join(',');
+  const data = cols.map((c) => formatCsvField(rowObj[c])).join(',');
+  return header + '\r\n' + data + '\r\n';
+}
+
+function slugForFilename(label) {
+  // ASCII-safe slug for download filenames.
+  return String(label || 'scenario')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 60) || 'scenario';
+}
+
+function todayStamp() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getExportLabelValue() {
+  // Read the user-supplied label (if any). The auto-default lives in the
+  // placeholder, not the value, so an empty field means "use the default."
+  const el = document.getElementById('export-label');
+  return el ? el.value : '';
+}
+
+function showExportToast(message) {
+  // Tiny in-page toast confirmation (e.g. "Copied to clipboard").
+  // Reuses the same .export-toast styling regardless of the message.
+  let toast = document.getElementById('export-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'export-toast';
+    toast.className = 'export-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add('is-visible');
+  clearTimeout(showExportToast._t);
+  showExportToast._t = setTimeout(() => toast.classList.remove('is-visible'), 1800);
+}
+
+function downloadCSV() {
+  if (!lastResults) return;
+  const label = getExportLabelValue();
+  const row = buildExportRow(lastResults, label);
+  const csv = buildCsvString(row);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ttn-${slugForFilename(row.label)}-${todayStamp()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  showExportToast('CSV downloaded');
+}
+
+async function copyCSVToClipboard() {
+  if (!lastResults) return;
+  const label = getExportLabelValue();
+  const row = buildExportRow(lastResults, label);
+  const csv = buildCsvString(row);
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(csv);
+      showExportToast('Copied to clipboard');
+      return;
+    }
+    // Legacy fallback (older browsers without async Clipboard API).
+    const ta = document.createElement('textarea');
+    ta.value = csv;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showExportToast('Copied to clipboard');
+  } catch (e) {
+    showExportToast('Copy failed — try Download CSV');
+  }
+}
+
+function injectPrintOnlyContent() {
+  // Build/refresh the print-only header, inputs table, and disclaimer
+  // block. Inserted into #dev-results so they live alongside the
+  // success card and charts during print.
+  const root = document.getElementById('dev-results');
+  if (!root || !lastResults) return;
+  // Remove any prior injection so we don't pile them up across multiple
+  // export attempts.
+  root.querySelectorAll('.print-only').forEach((el) => el.remove());
+
+  const label = (getExportLabelValue() || getAutoDefaultLabel(lastResults)).trim();
+  const inp = INPUT_STATE;
+  const inpSum = lastResults.inputs_summary;
+  const stats = lastResults.statistics || {};
+
+  // ---- Header (top of printed page) ----
+  const header = document.createElement('div');
+  header.className = 'print-only print-header';
+  header.innerHTML = `
+    <div class="print-header__brand">
+      <span class="print-header__mark" aria-hidden="true">●</span>
+      <div class="print-header__text">
+        <div class="print-header__title">Through the <em>Noise</em></div>
+        <div class="print-header__sub">Monte Carlo Retirement Scenario</div>
+      </div>
+    </div>
+    <div class="print-header__rule"></div>
+    <div class="print-header__scenario">Scenario: ${escapeHtml(label)}</div>
+    <div class="print-header__meta">Exported ${escapeHtml(new Date().toLocaleString())} &middot; TTN MC Simulator</div>
+  `;
+  root.insertBefore(header, root.firstChild);
+
+  // ---- Inputs section (printed after charts) ----
+  const fmtMoney = (n) => fmtCurrencyShort(n);
+  const fmtPct = (n, d = 2) => (Number.isFinite(n) ? n.toFixed(d) + '%' : '—');
+  const sumOf = (arr) => Array.isArray(arr) && arr.length ? arr.reduce((s, v) => s + v, 0) : 0;
+  const realP50 = lastResults.income_percentile_paths?.real_p50 || [];
+  const avgAnnualReal = realP50.length ? realP50.reduce((s, v) => s + v, 0) / realP50.length : 0;
+  const lifeP50 = sumOf(lastResults.income_percentile_paths?.real_p50);
+
+  const incomeRow = [];
+  if (inp.ss.amount > 0)      incomeRow.push(`SS ${fmtMoney(inp.ss.amount)}`);
+  if (inp.pension.amount > 0) incomeRow.push(`Pension ${fmtMoney(inp.pension.amount)}`);
+  if (inp.annuity.amount > 0) incomeRow.push(`Annuity ${fmtMoney(inp.annuity.amount)}`);
+  const incomeStr = incomeRow.length ? incomeRow.join(' / ') : 'None';
+
+  const sorStr = inp.sequence_of_returns
+    ? (inp.sor_force_2008 ? 'On (forced 2008)' : 'On (worst year)')
+    : 'Off';
+
+  const metrics = document.createElement('div');
+  metrics.className = 'print-only print-metrics';
+  metrics.innerHTML = `
+    <h3>Key Metrics (real, today's $)</h3>
+    <table class="print-table">
+      <tr><th>Starting safe withdrawal rate</th><td>${fmtPct(lastResults.year1_withdrawal_rate_pct)}</td></tr>
+      <tr><th>Avg annual real spending</th><td>${fmtMoney(avgAnnualReal)}</td></tr>
+      <tr><th>Lifetime real spending (p50)</th><td>${fmtMoney(lifeP50)}</td></tr>
+      <tr><th>Real ending balance (p10 / p50 / p90)</th>
+          <td>${fmtMoney(stats.p10?.ending_balance_real || 0)} / ${fmtMoney(stats.p50?.ending_balance_real || 0)} / ${fmtMoney(stats.p90?.ending_balance_real || 0)}</td></tr>
+    </table>
+  `;
+  // Insert right after the success card so the metrics appear ABOVE
+  // the charts in the printed output.
+  const successCard = document.getElementById('success-card');
+  if (successCard && successCard.parentNode === root) {
+    root.insertBefore(metrics, successCard.nextSibling);
+  } else {
+    root.appendChild(metrics);
+  }
+
+  // ---- Inputs section + disclaimer (printed at the end) ----
+  const inputsBlock = document.createElement('div');
+  inputsBlock.className = 'print-only print-inputs';
+  inputsBlock.innerHTML = `
+    <h3>Inputs</h3>
+    <table class="print-table">
+      <tr><th>Starting balance</th><td>${fmtMoney(inp.initial_balance)}</td></tr>
+      <tr><th>Age / horizon</th><td>${inp.current_age} / ${inp.period_years} years</td></tr>
+      <tr><th>Period</th><td>${escapeHtml(inpSum.historical_period)}</td></tr>
+      <tr><th>Allocation</th><td>${escapeHtml(getAllocationSummary() || '—')}</td></tr>
+      <tr><th>Strategy</th><td>${escapeHtml(STRATEGY_DISPLAY_NAMES[inp.distribution_strategy] || inp.distribution_strategy)}</td></tr>
+      <tr><th>Bucket 1 expense</th><td>${fmtMoney(inp.buckets[0]?.expense || 0)}/yr (today's $)</td></tr>
+      <tr><th>SS / Pension / Annuity</th><td>${escapeHtml(incomeStr)}</td></tr>
+      <tr><th>Sequence of returns</th><td>${sorStr}</td></tr>
+    </table>
+    <div class="print-disclaimer">
+      This tool is for educational purposes only and does not constitute financial,
+      investment, tax, or legal advice. Results are hypothetical; past performance
+      is not a guarantee of future results.
+    </div>
+  `;
+  root.appendChild(inputsBlock);
+}
+
+function downloadPDF() {
+  if (!lastResults) return;
+  const label = (getExportLabelValue() || getAutoDefaultLabel(lastResults)).trim();
+  const prevTitle = document.title;
+  document.title = `ttn-${slugForFilename(label)}-${todayStamp()}`;
+  injectPrintOnlyContent();
+  document.body.classList.add('is-printing');
+  // afterprint fires when the dialog closes (whether user saved or cancelled).
+  const cleanup = () => {
+    document.body.classList.remove('is-printing');
+    document.title = prevTitle;
+    document.querySelectorAll('#dev-results .print-only').forEach((el) => el.remove());
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+  window.print();
+}
+
+function bindExportButtons() {
+  document.getElementById('download-pdf-btn')?.addEventListener('click', downloadPDF);
+  document.getElementById('download-csv-btn')?.addEventListener('click', downloadCSV);
+  document.getElementById('copy-csv-btn')?.addEventListener('click', copyCSVToClipboard);
+}
+
+function updateExportAvailability() {
+  // Called after each run so the placeholder shows the current auto-default
+  // and the buttons reflect "results available."
+  const card = document.getElementById('export-card');
+  const labelEl = document.getElementById('export-label');
+  if (labelEl && lastResults) {
+    labelEl.placeholder = `e.g. ${getAutoDefaultLabel(lastResults)}`;
+  }
+  if (card) card.hidden = !lastResults;
+}
+
+/* ============================================================
+   End scenario export section
+   ============================================================ */
 
 function handleStrategyChange() {
   const strategy = document.getElementById('distribution-strategy').value;
@@ -2841,6 +3202,7 @@ function devRenderResults(results) {
   bindPortfolioChartToggle();
   renderResultsSummaryText(results);
   renderIncomeVariabilityReport(results);
+  updateExportAvailability();
 
   const elapsed = ((performance.now() - WORKER.startedAt) / 1000).toFixed(2);
 

@@ -1966,6 +1966,293 @@ em { font-style: italic; }
 }
 
 /* ============================================================
+   Export card (PDF / CSV / Clipboard)
+   ============================================================ */
+.export-card {
+  margin-top: 28px;
+  padding: 22px 26px 24px;
+  background: var(--paperAlt);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+.export-card__head { margin-bottom: 14px; }
+.export-card__title {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-style: italic;
+  color: var(--ink);
+}
+.export-card__intro {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--soft);
+}
+.export-card__field { margin: 14px 0 16px; }
+.export-card__input {
+  width: 100%;
+  max-width: 420px;
+  padding: 8px 10px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  color: var(--ink);
+  margin-top: 4px;
+}
+.export-card__input:focus {
+  outline: none;
+  border-color: var(--navy);
+  box-shadow: 0 0 0 2px rgba(31, 61, 107, 0.18);
+}
+.export-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.btn-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.btn-export:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+.btn-export--primary {
+  background: var(--ink);
+  color: var(--paper);
+}
+.btn-export--primary:hover {
+  background: var(--navy);
+  border-color: var(--navy);
+}
+
+/* Toast confirmation (clipboard / download feedback) */
+.export-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 3px;
+  box-shadow: 0 6px 24px rgba(20, 24, 30, 0.18);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 9999;
+}
+.export-toast.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ============================================================
+   Print styles (PDF export via browser native print-to-PDF)
+   ============================================================
+   When the user clicks "Download PDF" we toggle body.is-printing,
+   inject branded header + inputs + disclaimer as .print-only nodes,
+   then call window.print(). The @media print block reflows the
+   results panel into a clean letter-sized report and hides every
+   live-app element (input panel, modal, buttons, diagnostics, etc.).
+   ============================================================ */
+.print-only { display: none; }
+
+@page {
+  size: letter;
+  margin: 0.5in 0.6in;
+}
+
+@media print {
+  /* Hide everything except the results panel and our injected blocks */
+  .input-panel,
+  .results-placeholder,
+  #dev-progress,
+  #dev-diagnostics,
+  #export-card,
+  .modal-overlay,
+  .reference-section,
+  .page-footer,
+  .page-header__sub,
+  #dev-headline,
+  .chart-toggle,
+  .chart-card__intro,
+  .saved-scenarios-drawer { display: none !important; }
+
+  /* Show injected print-only nodes */
+  .print-only { display: block; }
+
+  /* Reset layout for full-page report */
+  html, body { background: #fff !important; color: #000 !important; }
+  .app-shell, .layout-grid, .results-panel, #dev-results {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    grid-template-columns: none !important;
+  }
+
+  /* Visible site header → hide; print header replaces it */
+  .page-header { display: none !important; }
+
+  /* Branded print header */
+  .print-header {
+    padding-bottom: 10px;
+    margin-bottom: 16px;
+    border-bottom: 1.4px solid #14181E;
+  }
+  .print-header__brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .print-header__mark {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: #B58820;
+    display: inline-block;
+    color: transparent;
+  }
+  .print-header__title {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: 22px;
+    line-height: 1.1;
+    color: #14181E;
+  }
+  .print-header__title em { font-style: italic; }
+  .print-header__sub {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #5A554C;
+    margin-top: 2px;
+  }
+  .print-header__rule { display: none; }
+  .print-header__scenario {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: 18px;
+    color: #14181E;
+    margin-top: 10px;
+  }
+  .print-header__meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: #5A554C;
+    margin-top: 2px;
+  }
+
+  /* Reflow the success card for print */
+  .success-card {
+    box-shadow: none !important;
+    border: 1px solid #cdcaca !important;
+    background: #fff !important;
+    margin: 0 0 14px !important;
+    padding: 14px !important;
+  }
+  .success-card__pct {
+    font-size: 56px !important;
+    line-height: 1 !important;
+  }
+
+  /* Chart cards: borderless and slimmer for print */
+  .chart-card {
+    page-break-inside: avoid;
+    border: none !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 0 14px !important;
+  }
+  .chart-card__title {
+    font-size: 13px !important;
+    margin: 0 0 6px !important;
+  }
+  .chart-container { height: 2.2in !important; }
+
+  /* IVR drawer summary / extras: hide non-essentials in print */
+  .ivr-section__subhead,
+  .ivr-cards,
+  .ivr-callout,
+  #gk-stats-card,
+  #guardrail-heatmap-card,
+  .results-summary,
+  #results-table-card,
+  #income-fan-chart + .chart-card__intro { display: none !important; }
+
+  /* Print-only injected sections */
+  .print-metrics,
+  .print-inputs {
+    page-break-inside: avoid;
+    margin: 14px 0;
+  }
+  .print-metrics h3,
+  .print-inputs h3 {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #5A554C;
+    margin: 0 0 6px;
+  }
+  .print-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 11px;
+    color: #14181E;
+  }
+  .print-table tr { border-bottom: 1px solid #e5e2dc; }
+  .print-table th {
+    text-align: left;
+    font-weight: 500;
+    color: #5A554C;
+    padding: 5px 0;
+    width: 38%;
+  }
+  .print-table td {
+    text-align: right;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 5px 0;
+  }
+  .print-disclaimer {
+    margin-top: 16px;
+    padding-top: 8px;
+    border-top: 1px solid #cdcaca;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 9px;
+    color: #5A554C;
+    line-height: 1.4;
+  }
+
+  /* Force exact color reproduction so charts print with brand colors */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
+
+/* ============================================================
    Footer
    ============================================================ */
 .page-footer {

@@ -640,6 +640,39 @@
             <dl class="dev-dl" id="dev-diagnostics"></dl>
           </div>
 
+          <!-- ===== Export this scenario ===== -->
+          <section id="export-card" class="export-card" hidden>
+            <div class="export-card__head">
+              <h3 class="export-card__title">Export this scenario</h3>
+              <p class="export-card__intro">
+                PDF for a human-readable, brand-styled report. CSV for importing the summary into a comparison tool later. Clipboard copies the CSV row directly so you can paste into Excel, Sheets, or another tool.
+              </p>
+            </div>
+            <div class="export-card__field">
+              <label class="field-label small" for="export-label">Scenario label</label>
+              <input
+                type="text"
+                id="export-label"
+                class="export-card__input"
+                maxlength="100"
+                autocomplete="off"
+                placeholder="e.g. 4% Bengen baseline"
+              />
+              <p class="field-note">Optional. If left blank, an auto-default based on your strategy and SWR will be used.</p>
+            </div>
+            <div class="export-card__actions">
+              <button type="button" id="download-pdf-btn" class="btn-export btn-export--primary">
+                <span aria-hidden="true">⤓</span> Download PDF
+              </button>
+              <button type="button" id="download-csv-btn" class="btn-export">
+                <span aria-hidden="true">⤓</span> Download CSV
+              </button>
+              <button type="button" id="copy-csv-btn" class="btn-export">
+                <span aria-hidden="true">⧉</span> Copy CSV to Clipboard
+              </button>
+            </div>
+          </section>
+
           <!-- Legacy placeholder for the dev-headline strip — preserved so existing JS that targets #dev-headline doesn't error -->
           <ul id="dev-headline" hidden></ul>
 
