@@ -1,0 +1,26 @@
+# Render deployment config.
+# Render will detect this file automatically on connect.
+# Reference: https://render.com/docs/yaml-spec
+services:
+  - type: web
+    runtime: static
+    name: ttn-monte-carlo-simulator
+    # No build step — pure static HTML/CSS/JS.
+    buildCommand: ""
+    # Root of the repo serves as the document root.
+    staticPublishPath: .
+    # SPA-style fallback NOT needed (single-page app routed via #anchor only).
+    # Add long-cache headers for the unchanging static assets; let HTML revalidate.
+    headers:
+      - path: /*.js
+        name: Cache-Control
+        value: public, max-age=3600
+      - path: /*.css
+        name: Cache-Control
+        value: public, max-age=3600
+      - path: /*.svg
+        name: Cache-Control
+        value: public, max-age=86400
+      - path: /*.json
+        name: Cache-Control
+        value: public, max-age=3600

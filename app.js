@@ -22,7 +22,7 @@ const PERIOD_LABELS = {
   custom:  { name: 'Custom range',           start: null, end: null }, // populated from STATE.customRange
 };
 
-const DATA_URL = './simba_returns_data%20(1).json';
+const DATA_URL = './simba_returns_data.json';
 
 /* -----------------------------------------------------------
    Boot

@@ -1,5 +1,14 @@
+# Local development / preview artifacts
 .claude/settings.local.json
 .DS_Store
 Thumbs.db
 *.log
 node_modules/
+
+# Internal backups and spec docs (kept locally, not in public repo)
+_checkpoint_phase3/
+distribution_strategy_requirements.pdf
+monte_carlo_requirements.md.pdf
+
+# Test outputs from PDF export verification
+ttn-test-*.pdf
