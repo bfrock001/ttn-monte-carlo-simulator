@@ -2000,145 +2000,265 @@ async function copyCSVToClipboard() {
   }
 }
 
-function injectPrintOnlyContent() {
-  // Build/refresh the print-only header, inputs table, and disclaimer
-  // block. Inserted into #dev-results so they live alongside the
-  // success card and charts during print.
-  const root = document.getElementById('dev-results');
-  if (!root || !lastResults) return;
-  // Remove any prior injection so we don't pile them up across multiple
-  // export attempts.
-  root.querySelectorAll('.print-only').forEach((el) => el.remove());
-
-  const label = (getExportLabelValue() || getAutoDefaultLabel(lastResults)).trim();
-  const inp = INPUT_STATE;
-  const inpSum = lastResults.inputs_summary;
-  const stats = lastResults.statistics || {};
-
-  // ---- Header (top of printed page) ----
-  const header = document.createElement('div');
-  header.className = 'print-only print-header';
-  header.innerHTML = `
-    <div class="print-header__brand">
-      <span class="print-header__mark" aria-hidden="true">●</span>
-      <div class="print-header__text">
-        <div class="print-header__title">Through the <em>Noise</em></div>
-        <div class="print-header__sub">Monte Carlo Retirement Scenario</div>
-      </div>
-    </div>
-    <div class="print-header__rule"></div>
-    <div class="print-header__scenario">Scenario: ${escapeHtml(label)}</div>
-    <div class="print-header__meta">Exported ${escapeHtml(new Date().toLocaleString())} &middot; TTN MC Simulator</div>
-  `;
-  root.insertBefore(header, root.firstChild);
-
-  // ---- Inputs section (printed after charts) ----
-  const fmtMoney = (n) => fmtCurrencyShort(n);
-  const fmtPct = (n, d = 2) => (Number.isFinite(n) ? n.toFixed(d) + '%' : '—');
-  const sumOf = (arr) => Array.isArray(arr) && arr.length ? arr.reduce((s, v) => s + v, 0) : 0;
-  const realP50 = lastResults.income_percentile_paths?.real_p50 || [];
-  const avgAnnualReal = realP50.length ? realP50.reduce((s, v) => s + v, 0) / realP50.length : 0;
-  const lifeP50 = sumOf(lastResults.income_percentile_paths?.real_p50);
-
-  const incomeRow = [];
-  if (inp.ss.amount > 0)      incomeRow.push(`SS ${fmtMoney(inp.ss.amount)}`);
-  if (inp.pension.amount > 0) incomeRow.push(`Pension ${fmtMoney(inp.pension.amount)}`);
-  if (inp.annuity.amount > 0) incomeRow.push(`Annuity ${fmtMoney(inp.annuity.amount)}`);
-  const incomeStr = incomeRow.length ? incomeRow.join(' / ') : 'None';
-
-  const sorStr = inp.sequence_of_returns
-    ? (inp.sor_force_2008 ? 'On (forced 2008)' : 'On (worst year)')
-    : 'Off';
-
-  const metrics = document.createElement('div');
-  metrics.className = 'print-only print-metrics';
-  metrics.innerHTML = `
-    <h3>Key Metrics (real, today's $)</h3>
-    <table class="print-table">
-      <tr><th>Starting safe withdrawal rate</th><td>${fmtPct(lastResults.year1_withdrawal_rate_pct)}</td></tr>
-      <tr><th>Avg annual real spending</th><td>${fmtMoney(avgAnnualReal)}</td></tr>
-      <tr><th>Lifetime real spending (p50)</th><td>${fmtMoney(lifeP50)}</td></tr>
-      <tr><th>Real ending balance (p10 / p50 / p90)</th>
-          <td>${fmtMoney(stats.p10?.ending_balance_real || 0)} / ${fmtMoney(stats.p50?.ending_balance_real || 0)} / ${fmtMoney(stats.p90?.ending_balance_real || 0)}</td></tr>
-    </table>
-  `;
-  // Insert right after the success card so the metrics appear ABOVE
-  // the charts in the printed output.
-  const successCard = document.getElementById('success-card');
-  if (successCard && successCard.parentNode === root) {
-    root.insertBefore(metrics, successCard.nextSibling);
-  } else {
-    root.appendChild(metrics);
-  }
-
-  // ---- Inputs section + disclaimer (printed at the end) ----
-  const inputsBlock = document.createElement('div');
-  inputsBlock.className = 'print-only print-inputs';
-  inputsBlock.innerHTML = `
-    <h3>Inputs</h3>
-    <table class="print-table">
-      <tr><th>Starting balance</th><td>${fmtMoney(inp.initial_balance)}</td></tr>
-      <tr><th>Age / horizon</th><td>${inp.current_age} / ${inp.period_years} years</td></tr>
-      <tr><th>Period</th><td>${escapeHtml(inpSum.historical_period)}</td></tr>
-      <tr><th>Allocation</th><td>${escapeHtml(getAllocationSummary() || '—')}</td></tr>
-      <tr><th>Strategy</th><td>${escapeHtml(STRATEGY_DISPLAY_NAMES[inp.distribution_strategy] || inp.distribution_strategy)}</td></tr>
-      <tr><th>Bucket 1 expense</th><td>${fmtMoney(inp.buckets[0]?.expense || 0)}/yr (today's $)</td></tr>
-      <tr><th>SS / Pension / Annuity</th><td>${escapeHtml(incomeStr)}</td></tr>
-      <tr><th>Sequence of returns</th><td>${sorStr}</td></tr>
-    </table>
-    <div class="print-disclaimer">
-      This tool is for educational purposes only and does not constitute financial,
-      investment, tax, or legal advice. Results are hypothetical; past performance
-      is not a guarantee of future results.
-    </div>
-  `;
-  root.appendChild(inputsBlock);
-}
-
 function downloadPDF() {
   if (!lastResults) {
     showExportToast('Run a simulation first');
     return;
   }
-  const label = (getExportLabelValue() || getAutoDefaultLabel(lastResults)).trim();
-  const prevTitle = document.title;
-  document.title = `ttn-${slugForFilename(label)}-${todayStamp()}`;
-  injectPrintOnlyContent();
-  document.body.classList.add('is-printing');
-
-  // Show immediate user feedback. If window.print() is silently no-op'd by the
-  // environment (some embedded webviews, locked-down kiosks, etc.) the user
-  // would otherwise see nothing happen.
-  showExportToast('Opening print dialog… choose "Save as PDF"');
-
-  // afterprint fires when the dialog closes (saved or cancelled). Some
-  // environments don't fire it (e.g. when print() is blocked). Add a
-  // safety-timer cleanup so the page never gets stuck in is-printing state.
-  let cleanedUp = false;
-  const cleanup = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    document.body.classList.remove('is-printing');
-    document.title = prevTitle;
-    document.querySelectorAll('#dev-results .print-only').forEach((el) => el.remove());
-    window.removeEventListener('afterprint', cleanup);
-  };
-  window.addEventListener('afterprint', cleanup);
-  // Fallback cleanup after 60s (long enough that even slow human review of
-  // the print preview completes first).
-  const fallbackTimer = setTimeout(cleanup, 60000);
-
-  try {
-    window.print();
-    // If we reach here synchronously without throwing, the dialog either
-    // opened modally or the environment no-op'd it. Either way the
-    // afterprint listener (or fallback timer) will handle cleanup.
-  } catch (e) {
-    clearTimeout(fallbackTimer);
-    cleanup();
-    showExportToast('Print blocked — try right-click → Print');
-    console.error('downloadPDF: window.print() threw', e);
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    showExportToast('PDF library not loaded — refresh the page');
+    console.error('downloadPDF: jsPDF not available on window.jspdf');
+    return;
   }
+
+  showExportToast('Generating PDF…');
+
+  // Defer the actual render to the next frame so the toast paints first.
+  requestAnimationFrame(() => {
+    try {
+      const label = (getExportLabelValue() || getAutoDefaultLabel(lastResults)).trim();
+      const inp = INPUT_STATE;
+      const inpSum = lastResults.inputs_summary;
+      const stats = lastResults.statistics || {};
+      const sm = lastResults.success_metrics || {};
+      const fmtMoney = (n) => fmtCurrencyShort(n);
+      const fmtPct = (n, d = 2) => (Number.isFinite(n) ? n.toFixed(d) + '%' : '—');
+      const sumOf = (arr) => Array.isArray(arr) && arr.length ? arr.reduce((s, v) => s + v, 0) : 0;
+      const realP50 = lastResults.income_percentile_paths?.real_p50 || [];
+      const avgAnnualReal = realP50.length ? realP50.reduce((s, v) => s + v, 0) / realP50.length : 0;
+      const lifeP50 = sumOf(lastResults.income_percentile_paths?.real_p50);
+
+      const incomeRow = [];
+      if (inp.ss.amount > 0)      incomeRow.push(`SS ${fmtMoney(inp.ss.amount)}`);
+      if (inp.pension.amount > 0) incomeRow.push(`Pension ${fmtMoney(inp.pension.amount)}`);
+      if (inp.annuity.amount > 0) incomeRow.push(`Annuity ${fmtMoney(inp.annuity.amount)}`);
+      const incomeStr = incomeRow.length ? incomeRow.join(' / ') : 'None';
+      const sorStr = inp.sequence_of_returns
+        ? (inp.sor_force_2008 ? 'On (forced 2008)' : 'On (worst year)')
+        : 'Off';
+
+      // --- jsPDF setup. Letter, portrait, points (1 in = 72 pt). ---
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+      const PAGE_W = 612, PAGE_H = 792;
+      const MARGIN_X = 43, MARGIN_TOP = 36;
+      const CONTENT_W = PAGE_W - MARGIN_X * 2;
+
+      // Brand colors as RGB triples (mirrors --ink, --gold, --navy, --soft)
+      const INK  = [20, 24, 30];
+      const GOLD = [181, 136, 32];
+      const NAVY = [31, 61, 107];
+      const SOFT = [90, 85, 76];
+      const RULE = [205, 200, 192];
+
+      let y = MARGIN_TOP;
+
+      // === Header: gold dot + brand title + scenario + meta ===
+      doc.setFillColor(...GOLD);
+      doc.circle(MARGIN_X + 6, y + 9, 5, 'F');
+
+      doc.setTextColor(...INK);
+      doc.setFont('times', 'normal');
+      doc.setFontSize(20);
+      doc.text('Through the ', MARGIN_X + 18, y + 14);
+      const beforeNoiseW = doc.getTextWidth('Through the ');
+      doc.setFont('times', 'italic');
+      doc.text('Noise', MARGIN_X + 18 + beforeNoiseW, y + 14);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(...SOFT);
+      doc.text('MONTE CARLO RETIREMENT SCENARIO', MARGIN_X + 18, y + 26);
+
+      y += 38;
+      // Rule under header
+      doc.setDrawColor(...INK);
+      doc.setLineWidth(1.0);
+      doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
+      y += 14;
+
+      // Scenario label
+      doc.setFont('times', 'italic');
+      doc.setFontSize(16);
+      doc.setTextColor(...INK);
+      doc.text(`Scenario: ${label}`, MARGIN_X, y);
+      y += 14;
+      // Meta line
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...SOFT);
+      doc.text(`Exported ${new Date().toLocaleString()}  ·  TTN MC Simulator`, MARGIN_X, y);
+      y += 22;
+
+      // === Success rate block ===
+      // "PORTFOLIO SUCCESS RATE" label (centered eyebrow)
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(...SOFT);
+      const label1 = 'PORTFOLIO SUCCESS RATE';
+      doc.text(label1, PAGE_W / 2 - doc.getTextWidth(label1) / 2, y);
+      y += 8;
+
+      // Big rate number — italic serif, centered, navy or clay depending on success
+      const pct = Number.isFinite(sm.success_rate_pct) ? sm.success_rate_pct : 0;
+      const rateColor = pct >= 90 ? [26, 110, 110]   // teal
+                      : pct >= 75 ? NAVY
+                      : pct >= 50 ? GOLD
+                      : [200, 74, 48];                // clay
+      doc.setFont('times', 'normal');
+      doc.setFontSize(56);
+      doc.setTextColor(...rateColor);
+      const rateStr = `${pct.toFixed(1)}%`;
+      doc.text(rateStr, PAGE_W / 2 - doc.getTextWidth(rateStr) / 2, y + 44);
+      y += 56;
+
+      // Success count + depletion info
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor(...SOFT);
+      const countStr = `${(sm.success_count || 0).toLocaleString('en-US')} of ${(sm.total_simulations || 0).toLocaleString('en-US')} simulations ended with $1 or more`;
+      doc.text(countStr, PAGE_W / 2 - doc.getTextWidth(countStr) / 2, y);
+      y += 12;
+      if (sm.failure_count > 0 && sm.median_depletion_year != null) {
+        const sa = lastResults.inputs_summary.start_age;
+        const medY = sm.median_depletion_year;
+        const depStr = `Median depletion among failures: Year ${medY} (Age ${sa + medY})`;
+        doc.setFontSize(9);
+        doc.text(depStr, PAGE_W / 2 - doc.getTextWidth(depStr) / 2, y);
+        y += 12;
+      }
+      y += 8;
+
+      // Rule
+      doc.setDrawColor(...RULE);
+      doc.setLineWidth(0.5);
+      doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
+      y += 14;
+
+      // === Key Metrics table (real $) ===
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(...SOFT);
+      doc.text("KEY METRICS  (real, today's $)", MARGIN_X, y);
+      y += 12;
+
+      const metricsRows = [
+        ['Starting safe withdrawal rate',          fmtPct(lastResults.year1_withdrawal_rate_pct)],
+        ['Avg annual real spending',               fmtMoney(avgAnnualReal)],
+        ['Lifetime real spending (p50)',           fmtMoney(lifeP50)],
+        ['Real ending balance (p10 / p50 / p90)',  `${fmtMoney(stats.p10?.ending_balance_real || 0)} / ${fmtMoney(stats.p50?.ending_balance_real || 0)} / ${fmtMoney(stats.p90?.ending_balance_real || 0)}`],
+      ];
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      for (const [k, v] of metricsRows) {
+        doc.setTextColor(...SOFT);
+        doc.text(k, MARGIN_X, y);
+        doc.setTextColor(...INK);
+        doc.setFont('courier', 'normal');
+        doc.text(v, PAGE_W - MARGIN_X - doc.getTextWidth(v), y);
+        doc.setFont('helvetica', 'normal');
+        y += 13;
+      }
+      y += 6;
+      doc.setDrawColor(...RULE);
+      doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
+      y += 14;
+
+      // === Charts (via Chart.js toBase64Image) ===
+      // 3.5 in wide × 1.5 in tall each → 252w × 108h pts. Two of them stack.
+      const CHART_W = CONTENT_W;
+      const CHART_H = 130;
+
+      const drawChart = (chartInstance, title) => {
+        if (!chartInstance) return;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(...SOFT);
+        doc.text(title, MARGIN_X, y);
+        y += 10;
+        try {
+          // Chart.js toBase64Image — uses the current canvas state.
+          // Pass a 2x backing scale for crisper PDF output.
+          const dataUrl = chartInstance.toBase64Image('image/png', 1.0);
+          doc.addImage(dataUrl, 'PNG', MARGIN_X, y, CHART_W, CHART_H, undefined, 'FAST');
+        } catch (e) {
+          doc.setFont('helvetica', 'italic');
+          doc.setFontSize(9);
+          doc.setTextColor(...SOFT);
+          doc.text('(chart could not be captured)', MARGIN_X, y + 14);
+        }
+        y += CHART_H + 10;
+      };
+
+      drawChart(portfolioFanChart, 'PROJECTED PORTFOLIO BALANCE (Nominal)');
+      drawChart(incomeFanChart,    'PROJECTED ANNUAL SPENDING');
+
+      // Rule
+      doc.setDrawColor(...RULE);
+      doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
+      y += 14;
+
+      // === Inputs table ===
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(...SOFT);
+      doc.text('INPUTS', MARGIN_X, y);
+      y += 12;
+
+      const inputsRows = [
+        ['Starting balance',        fmtMoney(inp.initial_balance)],
+        ['Age / horizon',           `${inp.current_age} / ${inp.period_years} years`],
+        ['Period',                  inpSum.historical_period],
+        ['Allocation',              getAllocationSummary() || '—'],
+        ['Strategy',                STRATEGY_DISPLAY_NAMES[inp.distribution_strategy] || inp.distribution_strategy],
+        ['Bucket 1 expense',        `${fmtMoney(inp.buckets[0]?.expense || 0)}/yr (today's $)`],
+        ['SS / Pension / Annuity',  incomeStr],
+        ['Sequence of returns',     sorStr],
+      ];
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9.5);
+      for (const [k, v] of inputsRows) {
+        doc.setTextColor(...SOFT);
+        doc.text(k, MARGIN_X, y);
+        doc.setTextColor(...INK);
+        // Right-aligned value, but wrap if too long
+        const valLines = doc.splitTextToSize(String(v), CONTENT_W - 180);
+        for (let i = 0; i < valLines.length; i++) {
+          const line = valLines[i];
+          doc.text(line, PAGE_W - MARGIN_X - doc.getTextWidth(line), y + (i * 11));
+        }
+        y += 12 + (valLines.length - 1) * 11;
+      }
+      y += 6;
+
+      // === Disclaimer at the bottom ===
+      const disclaimer = 'This tool is for educational purposes only and does not constitute financial, investment, tax, or legal advice. Results are hypothetical; past performance is not a guarantee of future results.';
+      doc.setDrawColor(...RULE);
+      doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
+      y += 10;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(...SOFT);
+      const lines = doc.splitTextToSize(disclaimer, CONTENT_W);
+      for (const line of lines) {
+        doc.text(line, MARGIN_X, y);
+        y += 9;
+      }
+      // Footer
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(...SOFT);
+      doc.text('Page 1 of 1', PAGE_W - MARGIN_X - doc.getTextWidth('Page 1 of 1'), PAGE_H - MARGIN_TOP);
+
+      // === Save ===
+      const filename = `ttn-${slugForFilename(label)}-${todayStamp()}.pdf`;
+      doc.save(filename);
+      showExportToast('PDF downloaded');
+    } catch (e) {
+      console.error('downloadPDF: jsPDF render threw', e);
+      showExportToast('PDF generation failed — see console');
+    }
+  });
 }
 
 function bindExportButtons() {
