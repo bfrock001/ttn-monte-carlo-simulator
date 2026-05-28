@@ -1316,6 +1316,27 @@ em { font-style: italic; }
   margin-left: 6px;
 }
 
+.success-card__warning {
+  margin: 16px auto 0;
+  max-width: 700px;
+  padding: 10px 14px;
+  background: rgba(181, 136, 32, 0.10);
+  border-left: 3px solid var(--gold);
+  border-radius: 0 2px 2px 0;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  text-align: left;
+}
+.success-card__warning::before {
+  content: "⚠ ";
+  font-weight: 700;
+  color: var(--gold);
+}
+.success-card__warning strong { font-weight: 700; }
+.success-card__warning em { font-style: italic; color: var(--ink); font-weight: 600; }
+
 /* Chart cards (used for portfolio fan, income fan, guardrail heatmap) */
 .chart-card {
   background: var(--paper);

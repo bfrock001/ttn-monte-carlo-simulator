@@ -509,6 +509,7 @@
                 <div><span>Median depletion:</span> <strong id="depl-median">—</strong></div>
               </div>
             </div>
+            <p class="success-card__warning" id="success-card-warning" hidden></p>
           </div>
 
           <!-- ===== Portfolio Fan Chart ===== -->
@@ -578,12 +579,13 @@
             <!-- Income fan chart -->
             <div class="chart-card">
               <div class="chart-card__head">
-                <h3 class="chart-card__title" id="income-chart-title">Projected Annual Income</h3>
+                <h3 class="chart-card__title" id="income-chart-title">Projected Annual Spending</h3>
                 <div class="chart-toggle" role="tablist" aria-label="Display mode">
                   <button class="chart-toggle__btn is-active" role="tab" data-chart="income" data-mode="nominal" aria-selected="true">Nominal</button>
                   <button class="chart-toggle__btn"           role="tab" data-chart="income" data-mode="real"    aria-selected="false">Real (inflation-adjusted)</button>
                 </div>
               </div>
+              <p id="income-chart-sources-note" class="chart-card__intro"></p>
               <div class="chart-container">
                 <canvas id="income-fan-chart"></canvas>
               </div>

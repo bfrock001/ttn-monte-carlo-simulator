@@ -1395,10 +1395,15 @@ function refreshConstrainingWarning() {
   else if (period === 'postwar') start = 1946;
   else if (period === 'modern')  start = 1972;
 
-  // Find selected asset with latest native_start > period start
+  // Find selected asset with latest native_start > period start.
+  // Only consider allocations with a positive weight — a 0% asset is dropped by
+  // the run-time filter before the worker sees it, so it doesn't actually
+  // constrain the sample pool. Including it in this check would produce a
+  // misleading warning that doesn't match the simulation's behavior.
   let worst = null;
   for (const a of INPUT_STATE.allocations) {
     if (!a.key) continue;
+    if (!(a.pct > 0)) continue;
     const meta = STATE.data.assets[a.key];
     if (!meta) continue;
     if (meta.native_start > start) {
@@ -2095,6 +2100,30 @@ function renderSuccessCard(results) {
     divEl.hidden  = true;
     deplEl.hidden = true;
   }
+
+  // Constrained-data warning — mirror the message from the summary text block
+  // so it's visible at the top of the results, not buried below. Use the
+  // period's nominal start (what the user requested) — the worker's
+  // historical_period string reflects the *truncated* range, which would
+  // collapse the comparison to itself.
+  const warnEl = document.getElementById('success-card-warning');
+  if (warnEl) {
+    const inp = results.inputs_summary;
+    const period = INPUT_STATE.historical_period;
+    let nominalStart;
+    if      (period === 'custom')  nominalStart = INPUT_STATE.custom_start;
+    else if (period === 'native')  nominalStart = 1871;
+    else if (period === 'postwar') nominalStart = 1946;
+    else if (period === 'modern')  nominalStart = 1972;
+    else                           nominalStart = null;
+    if (inp.constraining_asset && nominalStart != null && inp.constraining_asset_start > nominalStart) {
+      warnEl.hidden = false;
+      warnEl.innerHTML = `<strong>Heads up:</strong> the available historical data was constrained to <strong>${inp.constraining_asset_start}+</strong> because <em>${escapeHtml(inp.constraining_asset)}</em> only has native data from <strong>${inp.constraining_asset_start}</strong>. The ${nominalStart}–${inp.constraining_asset_start - 1} range (incl. major crises in those years) is not in the sample pool.`;
+    } else {
+      warnEl.hidden = true;
+      warnEl.innerHTML = '';
+    }
+  }
 }
 
 /* ============================================================
@@ -2490,7 +2519,27 @@ function renderIncomeFanChart(results, mode) {
   });
 
   const titleEl = document.getElementById('income-chart-title');
-  if (titleEl) titleEl.textContent = `Projected Annual Income — ${sims.toLocaleString('en-US')} Simulations`;
+  if (titleEl) titleEl.textContent = `Projected Annual Spending — ${sims.toLocaleString('en-US')} Simulations`;
+  // Strategy-driven income sources note. Spending = portfolio withdrawal + SS + pension + annuity.
+  const noteEl = document.getElementById('income-chart-sources-note');
+  if (noteEl) {
+    const inp = results.inputs_summary;
+    const hasSS      = INPUT_STATE.ss.amount      > 0;
+    const hasPension = INPUT_STATE.pension.amount > 0;
+    const hasAnnuity = INPUT_STATE.annuity.amount > 0;
+    const sources = [];
+    if (hasSS)      sources.push('Social Security');
+    if (hasPension) sources.push('pension');
+    if (hasAnnuity) sources.push('annuity');
+    if (sources.length === 0) {
+      noteEl.textContent = 'Total annual spending — entirely funded by portfolio withdrawals (no guaranteed-income inputs supplied).';
+    } else {
+      const list = sources.length === 1 ? sources[0]
+                 : sources.length === 2 ? `${sources[0]} and ${sources[1]}`
+                 : `${sources.slice(0, -1).join(', ')}, and ${sources[sources.length - 1]}`;
+    noteEl.textContent = `Total annual spending — combines the portfolio withdrawal with ${list}. The portfolio funds (total spending − guaranteed income).`;
+    }
+  }
 }
 
 function bindIncomeChartToggle() {
