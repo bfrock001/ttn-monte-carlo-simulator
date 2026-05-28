@@ -1930,8 +1930,10 @@ function getExportLabelValue() {
 }
 
 function showExportToast(message) {
-  // Tiny in-page toast confirmation (e.g. "Copied to clipboard").
-  // Reuses the same .export-toast styling regardless of the message.
+  // Two channels of feedback so the user can't miss it:
+  //  (1) Floating toast at bottom of viewport (existing pattern).
+  //  (2) Inline status text inside the export card (impossible to miss
+  //      even if the toast lands off-screen in an embedded preview pane).
   let toast = document.getElementById('export-toast');
   if (!toast) {
     toast = document.createElement('div');
@@ -1942,7 +1944,17 @@ function showExportToast(message) {
   toast.textContent = message;
   toast.classList.add('is-visible');
   clearTimeout(showExportToast._t);
-  showExportToast._t = setTimeout(() => toast.classList.remove('is-visible'), 1800);
+  showExportToast._t = setTimeout(() => toast.classList.remove('is-visible'), 4000);
+
+  // Inline status mirror inside the export card so the user always sees
+  // feedback, even if the floating toast is clipped by the preview pane.
+  const inline = document.getElementById('export-status');
+  if (inline) {
+    inline.textContent = message;
+    inline.classList.add('is-visible');
+    clearTimeout(showExportToast._inlineT);
+    showExportToast._inlineT = setTimeout(() => inline.classList.remove('is-visible'), 8000);
+  }
 }
 
 function downloadCSV() {
@@ -2130,9 +2142,20 @@ function downloadPDF() {
 }
 
 function bindExportButtons() {
-  document.getElementById('download-pdf-btn')?.addEventListener('click', downloadPDF);
-  document.getElementById('download-csv-btn')?.addEventListener('click', downloadCSV);
-  document.getElementById('copy-csv-btn')?.addEventListener('click', copyCSVToClipboard);
+  // Diagnostic console traces — helpful when the user reports "nothing
+  // happens" so we can confirm whether the handler is firing or not.
+  document.getElementById('download-pdf-btn')?.addEventListener('click', () => {
+    console.log('[export] PDF button clicked', { hasResults: !!lastResults });
+    downloadPDF();
+  });
+  document.getElementById('download-csv-btn')?.addEventListener('click', () => {
+    console.log('[export] CSV button clicked', { hasResults: !!lastResults });
+    downloadCSV();
+  });
+  document.getElementById('copy-csv-btn')?.addEventListener('click', () => {
+    console.log('[export] Copy-CSV button clicked', { hasResults: !!lastResults });
+    copyCSVToClipboard();
+  });
 }
 
 function updateExportAvailability() {
