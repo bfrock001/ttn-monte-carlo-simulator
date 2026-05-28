@@ -1249,6 +1249,54 @@ em { font-style: italic; }
   margin: 2px 0 0;
   accent-color: var(--navy);
 }
+.disclaimer__link {
+  color: var(--clay);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.disclaimer__link:hover {
+  color: var(--navy);
+}
+
+/* Terms of Use modal content styling */
+#terms-modal .modal-title { font-size: 17px; line-height: 1.25; padding-right: 24px; }
+#terms-modal-body { font-family: var(--font-sans); font-size: 13px; color: var(--ink); line-height: 1.55; }
+#terms-modal-body p { margin: 0 0 10px; color: var(--ink); }
+#terms-modal-body h3 {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--soft);
+  margin: 18px 0 6px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--rule);
+}
+#terms-modal-body h3:first-of-type { margin-top: 14px; }
+.terms-modal__intro {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--clay);
+}
+.terms-modal__list {
+  margin: 0 0 10px 18px;
+  padding: 0;
+}
+.terms-modal__list li {
+  margin-bottom: 4px;
+}
+.terms-modal__warning {
+  background: rgba(200, 74, 48, 0.08);
+  border-left: 3px solid var(--clay);
+  padding: 10px 14px;
+  margin: 10px 0 0;
+  border-radius: 0 2px 2px 0;
+}
 
 /* ============================================================
    Results panel

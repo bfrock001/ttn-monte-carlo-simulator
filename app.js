@@ -747,6 +747,7 @@ function initInputPanel() {
   // Event bindings
   bindInputEvents();
   bindStrategyModal();
+  bindTermsModal();
   bindExportButtons();
 
   // Initial validation pass
@@ -1763,6 +1764,46 @@ function bindStrategyModal() {
 }
 
 /* ============================================================
+   Terms of Use modal — opens from the "terms of use" hyperlink
+   in the disclaimer checkbox. Mirrors the strategy info modal
+   pattern (overlay-click closes, Esc closes, focus management).
+   The hyperlink does NOT toggle the checkbox — clicking it only
+   opens the modal so the user can read the full text first.
+   ============================================================ */
+function openTermsModal() {
+  const modal = document.getElementById('terms-modal');
+  if (!modal) return;
+  modal.hidden = false;
+  setTimeout(() => document.getElementById('terms-modal-close-btn')?.focus(), 50);
+  document.addEventListener('keydown', handleTermsModalKeydown);
+}
+function closeTermsModal() {
+  const modal = document.getElementById('terms-modal');
+  if (!modal) return;
+  modal.hidden = true;
+  document.removeEventListener('keydown', handleTermsModalKeydown);
+  document.getElementById('open-terms-link')?.focus();
+}
+function handleTermsModalKeydown(e) {
+  if (e.key === 'Escape') closeTermsModal();
+}
+function bindTermsModal() {
+  document.getElementById('open-terms-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    // Don't let the click bubble up to the surrounding <label>, which would
+    // toggle the disclaimer checkbox. The user must explicitly check the box
+    // after reading.
+    e.stopPropagation();
+    openTermsModal();
+  });
+  document.getElementById('terms-modal-close-btn')?.addEventListener('click', closeTermsModal);
+  document.getElementById('terms-modal-close-footer-btn')?.addEventListener('click', closeTermsModal);
+  document.getElementById('terms-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'terms-modal') closeTermsModal();
+  });
+}
+
+/* ============================================================
    Scenario Export (PDF + CSV + Clipboard)
    ============================================================
    Produces a one-row CSV per the producer contract in the project plan
@@ -2038,109 +2079,116 @@ function downloadPDF() {
         : 'Off';
 
       // --- jsPDF setup. Letter, portrait, points (1 in = 72 pt). ---
+      // Vertical budget (target usable height = PAGE_H - 2 * MARGIN_TOP = 720pt).
+      //   Header block         ......  64
+      //   Scenario + timestamp ......  36
+      //   Success rate block   ......  98
+      //   Key metrics          ......  74
+      //   Portfolio chart      ......  128 (title 12 + chart 110 + gap 6)
+      //   Income chart         ......  128
+      //   Inputs (2-col grid)  ......  74
+      //   Disclaimer + footer  ......  40
+      //   Inter-section gaps   ......  28
+      //   ---------------------------
+      //   TOTAL                ......  670 (fits in 720 with 50pt buffer)
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
       const PAGE_W = 612, PAGE_H = 792;
       const MARGIN_X = 43, MARGIN_TOP = 36;
       const CONTENT_W = PAGE_W - MARGIN_X * 2;
+      const SECTION_GAP = 8;   // padding between major sections
 
-      // Brand colors as RGB triples (mirrors --ink, --gold, --navy, --soft)
+      // Brand colors as RGB triples (mirrors --ink, --gold, --navy, --soft, --teal, --clay)
       const INK  = [20, 24, 30];
       const GOLD = [181, 136, 32];
       const NAVY = [31, 61, 107];
+      const TEAL = [26, 110, 110];
+      const CLAY = [200, 74, 48];
       const SOFT = [90, 85, 76];
       const RULE = [205, 200, 192];
 
       let y = MARGIN_TOP;
 
-      // === Header: gold dot + brand title + scenario + meta ===
+      // === Header: gold dot + brand title + descriptor ===
       doc.setFillColor(...GOLD);
-      doc.circle(MARGIN_X + 6, y + 9, 5, 'F');
-
+      doc.circle(MARGIN_X + 6, y + 8, 4.5, 'F');
       doc.setTextColor(...INK);
       doc.setFont('times', 'normal');
-      doc.setFontSize(20);
-      doc.text('Through the ', MARGIN_X + 18, y + 14);
+      doc.setFontSize(18);
+      doc.text('Through the ', MARGIN_X + 18, y + 13);
       const beforeNoiseW = doc.getTextWidth('Through the ');
       doc.setFont('times', 'italic');
-      doc.text('Noise', MARGIN_X + 18 + beforeNoiseW, y + 14);
-
+      doc.text('Noise', MARGIN_X + 18 + beforeNoiseW, y + 13);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setTextColor(...SOFT);
-      doc.text('MONTE CARLO RETIREMENT SCENARIO', MARGIN_X + 18, y + 26);
+      doc.text('MONTE CARLO RETIREMENT SCENARIO', MARGIN_X + 18, y + 24);
+      y += 34;
 
-      y += 38;
       // Rule under header
       doc.setDrawColor(...INK);
       doc.setLineWidth(1.0);
       doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
-      y += 14;
+      y += 12;
 
-      // Scenario label
+      // Scenario label + timestamp
       doc.setFont('times', 'italic');
-      doc.setFontSize(16);
+      doc.setFontSize(14);
       doc.setTextColor(...INK);
       doc.text(`Scenario: ${label}`, MARGIN_X, y);
-      y += 14;
-      // Meta line
+      y += 12;
       doc.setFont('courier', 'normal');
-      doc.setFontSize(8.5);
+      doc.setFontSize(8);
       doc.setTextColor(...SOFT);
       doc.text(`Exported ${new Date().toLocaleString()}  ·  TTN MC Simulator`, MARGIN_X, y);
-      y += 22;
+      y += SECTION_GAP + 10;
 
-      // === Success rate block ===
-      // "PORTFOLIO SUCCESS RATE" label (centered eyebrow)
+      // === Success rate block (compact) ===
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setTextColor(...SOFT);
-      const label1 = 'PORTFOLIO SUCCESS RATE';
-      doc.text(label1, PAGE_W / 2 - doc.getTextWidth(label1) / 2, y);
-      y += 8;
+      const eyebrow = 'PORTFOLIO SUCCESS RATE';
+      doc.text(eyebrow, PAGE_W / 2 - doc.getTextWidth(eyebrow) / 2, y);
+      y += 6;
 
-      // Big rate number — italic serif, centered, navy or clay depending on success
       const pct = Number.isFinite(sm.success_rate_pct) ? sm.success_rate_pct : 0;
-      const rateColor = pct >= 90 ? [26, 110, 110]   // teal
+      const rateColor = pct >= 90 ? TEAL
                       : pct >= 75 ? NAVY
                       : pct >= 50 ? GOLD
-                      : [200, 74, 48];                // clay
+                      : CLAY;
       doc.setFont('times', 'normal');
-      doc.setFontSize(56);
+      doc.setFontSize(46);
       doc.setTextColor(...rateColor);
       const rateStr = `${pct.toFixed(1)}%`;
-      doc.text(rateStr, PAGE_W / 2 - doc.getTextWidth(rateStr) / 2, y + 44);
-      y += 56;
+      doc.text(rateStr, PAGE_W / 2 - doc.getTextWidth(rateStr) / 2, y + 38);
+      y += 46;
 
-      // Success count + depletion info
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
+      doc.setFontSize(9.5);
       doc.setTextColor(...SOFT);
       const countStr = `${(sm.success_count || 0).toLocaleString('en-US')} of ${(sm.total_simulations || 0).toLocaleString('en-US')} simulations ended with $1 or more`;
       doc.text(countStr, PAGE_W / 2 - doc.getTextWidth(countStr) / 2, y);
-      y += 12;
+      y += 11;
       if (sm.failure_count > 0 && sm.median_depletion_year != null) {
         const sa = lastResults.inputs_summary.start_age;
         const medY = sm.median_depletion_year;
-        const depStr = `Median depletion among failures: Year ${medY} (Age ${sa + medY})`;
-        doc.setFontSize(9);
+        const depStr = `Median depletion: Year ${medY} (Age ${sa + medY})`;
+        doc.setFontSize(8.5);
         doc.text(depStr, PAGE_W / 2 - doc.getTextWidth(depStr) / 2, y);
-        y += 12;
+        y += 10;
       }
-      y += 8;
-
-      // Rule
+      y += SECTION_GAP;
       doc.setDrawColor(...RULE);
       doc.setLineWidth(0.5);
       doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
-      y += 14;
+      y += 12;
 
-      // === Key Metrics table (real $) ===
+      // === Key Metrics table (real $, 4 rows) ===
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setTextColor(...SOFT);
       doc.text("KEY METRICS  (real, today's $)", MARGIN_X, y);
-      y += 12;
+      y += 11;
 
       const metricsRows = [
         ['Starting safe withdrawal rate',          fmtPct(lastResults.year1_withdrawal_rate_pct)],
@@ -2148,37 +2196,32 @@ function downloadPDF() {
         ['Lifetime real spending (p50)',           fmtMoney(lifeP50)],
         ['Real ending balance (p10 / p50 / p90)',  `${fmtMoney(stats.p10?.ending_balance_real || 0)} / ${fmtMoney(stats.p50?.ending_balance_real || 0)} / ${fmtMoney(stats.p90?.ending_balance_real || 0)}`],
       ];
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
+      doc.setFontSize(9.5);
       for (const [k, v] of metricsRows) {
+        doc.setFont('helvetica', 'normal');
         doc.setTextColor(...SOFT);
         doc.text(k, MARGIN_X, y);
-        doc.setTextColor(...INK);
         doc.setFont('courier', 'normal');
+        doc.setTextColor(...INK);
         doc.text(v, PAGE_W - MARGIN_X - doc.getTextWidth(v), y);
-        doc.setFont('helvetica', 'normal');
-        y += 13;
+        y += 12;
       }
-      y += 6;
+      y += SECTION_GAP;
       doc.setDrawColor(...RULE);
       doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
-      y += 14;
+      y += 12;
 
       // === Charts (via Chart.js toBase64Image) ===
-      // 3.5 in wide × 1.5 in tall each → 252w × 108h pts. Two of them stack.
       const CHART_W = CONTENT_W;
-      const CHART_H = 130;
-
+      const CHART_H = 110;
       const drawChart = (chartInstance, title) => {
         if (!chartInstance) return;
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
+        doc.setFontSize(8.5);
         doc.setTextColor(...SOFT);
         doc.text(title, MARGIN_X, y);
-        y += 10;
+        y += 8;
         try {
-          // Chart.js toBase64Image — uses the current canvas state.
-          // Pass a 2x backing scale for crisper PDF output.
           const dataUrl = chartInstance.toBase64Image('image/png', 1.0);
           doc.addImage(dataUrl, 'PNG', MARGIN_X, y, CHART_W, CHART_H, undefined, 'FAST');
         } catch (e) {
@@ -2187,68 +2230,83 @@ function downloadPDF() {
           doc.setTextColor(...SOFT);
           doc.text('(chart could not be captured)', MARGIN_X, y + 14);
         }
-        y += CHART_H + 10;
+        y += CHART_H + SECTION_GAP;
       };
 
       drawChart(portfolioFanChart, 'PROJECTED PORTFOLIO BALANCE (Nominal)');
       drawChart(incomeFanChart,    'PROJECTED ANNUAL SPENDING');
 
-      // Rule
       doc.setDrawColor(...RULE);
       doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
-      y += 14;
+      y += 12;
 
-      // === Inputs table ===
+      // === Inputs (2-column grid, 4 rows × 2 columns) ===
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setTextColor(...SOFT);
       doc.text('INPUTS', MARGIN_X, y);
-      y += 12;
+      y += 11;
 
       const inputsRows = [
         ['Starting balance',        fmtMoney(inp.initial_balance)],
-        ['Age / horizon',           `${inp.current_age} / ${inp.period_years} years`],
-        ['Period',                  inpSum.historical_period],
+        ['Age / horizon',           `${inp.current_age} / ${inp.period_years} yrs`],
+        ['Period',                  inpSum.historical_period.replace(/\s*\([^)]+\)\s*/, '')], // trim parenthetical label
+        ['Strategy',                STRATEGY_SHORT_NAMES[inp.distribution_strategy] || inp.distribution_strategy],
         ['Allocation',              getAllocationSummary() || '—'],
-        ['Strategy',                STRATEGY_DISPLAY_NAMES[inp.distribution_strategy] || inp.distribution_strategy],
-        ['Bucket 1 expense',        `${fmtMoney(inp.buckets[0]?.expense || 0)}/yr (today's $)`],
+        ['Bucket 1 expense',        `${fmtMoney(inp.buckets[0]?.expense || 0)}/yr`],
         ['SS / Pension / Annuity',  incomeStr],
         ['Sequence of returns',     sorStr],
       ];
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9.5);
-      for (const [k, v] of inputsRows) {
-        doc.setTextColor(...SOFT);
-        doc.text(k, MARGIN_X, y);
-        doc.setTextColor(...INK);
-        // Right-aligned value, but wrap if too long
-        const valLines = doc.splitTextToSize(String(v), CONTENT_W - 180);
-        for (let i = 0; i < valLines.length; i++) {
-          const line = valLines[i];
-          doc.text(line, PAGE_W - MARGIN_X - doc.getTextWidth(line), y + (i * 11));
-        }
-        y += 12 + (valLines.length - 1) * 11;
+      // Render 2 columns: column A = rows 0–3, column B = rows 4–7
+      const COL_W = (CONTENT_W - 18) / 2; // 18pt gutter between columns
+      const COL_A_X = MARGIN_X;
+      const COL_B_X = MARGIN_X + COL_W + 18;
+      const VALUE_X_OFFSET = 95; // x offset from column origin where values start
+      doc.setFontSize(8.5);
+      for (let r = 0; r < 4; r++) {
+        const yRow = y + r * 12;
+        const drawRow = (col, idx) => {
+          if (idx >= inputsRows.length) return;
+          const [k, v] = inputsRows[idx];
+          const colX = col === 'A' ? COL_A_X : COL_B_X;
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(...SOFT);
+          doc.text(k, colX, yRow);
+          doc.setFont('courier', 'normal');
+          doc.setTextColor(...INK);
+          // Truncate long values to fit the column
+          const maxValW = COL_W - VALUE_X_OFFSET - 2;
+          let vStr = String(v);
+          while (doc.getTextWidth(vStr) > maxValW && vStr.length > 6) {
+            vStr = vStr.slice(0, -2) + '…';
+          }
+          doc.text(vStr, colX + VALUE_X_OFFSET, yRow);
+        };
+        drawRow('A', r);
+        drawRow('B', r + 4);
       }
-      y += 6;
+      y += 4 * 12 + SECTION_GAP;
 
-      // === Disclaimer at the bottom ===
-      const disclaimer = 'This tool is for educational purposes only and does not constitute financial, investment, tax, or legal advice. Results are hypothetical; past performance is not a guarantee of future results.';
+      // === Disclaimer + footer ===
       doc.setDrawColor(...RULE);
       doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
-      y += 10;
+      y += 9;
+      const disclaimer = 'This tool is for educational purposes only and does not constitute financial, investment, tax, or legal advice. Results are hypothetical; past performance is not a guarantee of future results.';
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7.5);
       doc.setTextColor(...SOFT);
-      const lines = doc.splitTextToSize(disclaimer, CONTENT_W);
-      for (const line of lines) {
+      const dLines = doc.splitTextToSize(disclaimer, CONTENT_W);
+      for (const line of dLines) {
         doc.text(line, MARGIN_X, y);
         y += 9;
       }
-      // Footer
+      // Page footer (fixed at the bottom margin, not relative to y)
       doc.setFont('courier', 'normal');
       doc.setFontSize(7);
       doc.setTextColor(...SOFT);
-      doc.text('Page 1 of 1', PAGE_W - MARGIN_X - doc.getTextWidth('Page 1 of 1'), PAGE_H - MARGIN_TOP);
+      const footTxt = 'ttn-monte-carlo-simulator';
+      doc.text(footTxt, MARGIN_X, PAGE_H - 20);
+      doc.text('Page 1 of 1', PAGE_W - MARGIN_X - doc.getTextWidth('Page 1 of 1'), PAGE_H - 20);
 
       // === Save ===
       const filename = `ttn-${slugForFilename(label)}-${todayStamp()}.pdf`;
