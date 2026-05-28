@@ -1049,7 +1049,8 @@ function renderBuckets() {
     if ((uniform || cdLockBuckets) && idx > 0) {
       input.disabled = true;
     } else {
-      attachCurrencyHandlers(input, (raw) => {
+      // Shared logic for propagating bucket 1's value across uniform/carry-forward buckets.
+      const propagateBucketValue = (raw) => {
         const annualValue = monthly ? raw * 12 : raw;
         INPUT_STATE.buckets[idx].expense = annualValue;
         INPUT_STATE.buckets[idx].manual = true;
@@ -1067,9 +1068,25 @@ function renderBuckets() {
             }
           }
         }
-        renderBuckets();
-        refreshAllDerived();
-      });
+      };
+      attachCurrencyHandlers(
+        input,
+        // onCommit (blur): update state, rebuild buckets to reflect uniform/carry-forward
+        // labels and re-trigger downstream derived UI. Safe because focus is already
+        // leaving the input.
+        (raw) => {
+          propagateBucketValue(raw);
+          renderBuckets();
+          refreshAllDerived();
+        },
+        // onLiveUpdate (input keystroke): update state only — no renderBuckets()
+        // because re-creating the input would destroy the active element mid-typing.
+        // The blur handler will re-render once the user tabs/clicks away.
+        (raw) => {
+          propagateBucketValue(raw);
+          refreshAllDerived();
+        }
+      );
     }
     wrap.appendChild(input);
 
@@ -1114,7 +1131,16 @@ function strategyBucketNote(strategy) {
 /* -----------------------------------------------------------
    Currency input formatting
    ----------------------------------------------------------- */
-function attachCurrencyHandlers(input, onCommit) {
+function attachCurrencyHandlers(input, onCommit, onLiveUpdate) {
+  // Two-callback model:
+  //   onLiveUpdate (optional) — fired on every keystroke. Should ONLY update
+  //     state. Do NOT re-render the containing DOM (it would destroy the input
+  //     mid-typing).
+  //   onCommit — fired on blur. Final commit; safe to do DOM rebuilds.
+  //
+  // If the caller doesn't pass onLiveUpdate, we still commit per-keystroke
+  // using onCommit — fine for simple inputs (SS, balance, etc.) whose commit
+  // callback does NOT recreate the input element.
   input.addEventListener('focus', () => {
     const raw = parseCurrency(input.value);
     input.value = raw > 0 ? String(raw) : '';
@@ -1123,13 +1149,11 @@ function attachCurrencyHandlers(input, onCommit) {
     // Strip non-digit chars while typing (but leave the field as the user sees)
     const cleaned = input.value.replace(/[^0-9]/g, '');
     input.value = cleaned;
-    // Commit on every keystroke. This guards against any edge case where blur
-    // doesn't fire (touch, focus races, autofill, programmatic value changes,
-    // tab-then-immediate-click on Run, etc.) — state stays in sync with the
-    // digits the user actually sees in the field. Blur still does the display
-    // reformatting (e.g., "$30,000").
+    // Live-update state to track the displayed digits. Guards against edge
+    // cases where blur never fires (touch, focus races, autofill, etc.).
     const raw = cleaned ? parseInt(cleaned, 10) || 0 : 0;
-    onCommit(raw);
+    if (onLiveUpdate) onLiveUpdate(raw);
+    else              onCommit(raw);
   });
   input.addEventListener('blur', () => {
     const raw = parseCurrency(input.value);
