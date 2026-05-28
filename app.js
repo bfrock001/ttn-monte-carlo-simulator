@@ -727,6 +727,11 @@ const INPUT_STATE = {
   distribution_strategy: DEFAULTS.distribution_strategy,
   minimum_withdrawal_annual: DEFAULTS.minimum_withdrawal_annual,
   strategy_params: { ...DEFAULTS.strategy_params },
+  // Disclaimer / Terms of Use acceptance — null until the user checks the
+  // box; set to an ISO timestamp on check, cleared on uncheck. Surfaced in
+  // the PDF inputs section as a paper trail that the user agreed before
+  // running and exporting.
+  terms_accepted_at: null,
 };
 
 function initInputPanel() {
@@ -1377,7 +1382,11 @@ function bindInputEvents() {
   }
 
   // Disclaimer + Run + Reset
-  document.getElementById('disclaimer-check')?.addEventListener('change', refreshRunButtonState);
+  document.getElementById('disclaimer-check')?.addEventListener('change', (e) => {
+    // Record acceptance timestamp on check (a paper trail for the PDF export).
+    INPUT_STATE.terms_accepted_at = e.target.checked ? new Date().toISOString() : null;
+    refreshRunButtonState();
+  });
   document.getElementById('run-sim')?.addEventListener('click', runSimulationFromInputs);
   document.getElementById('reset-defaults')?.addEventListener('click', resetToDefaults);
   // Mirrored Reset button at the top of the input panel (QA / quick-access).
@@ -2285,20 +2294,53 @@ function downloadPDF() {
         drawRow('A', r);
         drawRow('B', r + 4);
       }
-      y += 4 * 12 + SECTION_GAP;
+      y += 4 * 12 + 4;
+
+      // Full-width Terms of Use acceptance row — paper trail showing the user
+      // checked the disclaimer box before exporting this scenario.
+      const acceptedAt = INPUT_STATE.terms_accepted_at;
+      const termsStr = acceptedAt
+        ? `Accepted ${new Date(acceptedAt).toLocaleString()}`
+        : 'Not accepted';
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...SOFT);
+      doc.text('Terms of use', MARGIN_X, y);
+      doc.setFont('courier', 'normal');
+      doc.setTextColor(...INK);
+      doc.text(termsStr, PAGE_W - MARGIN_X - doc.getTextWidth(termsStr), y);
+      y += SECTION_GAP + 4;
 
       // === Disclaimer + footer ===
       doc.setDrawColor(...RULE);
       doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
-      y += 9;
-      const disclaimer = 'This tool is for educational purposes only and does not constitute financial, investment, tax, or legal advice. Results are hypothetical; past performance is not a guarantee of future results.';
-      doc.setFont('helvetica', 'normal');
+      y += 8;
+      // Eyebrow label
+      doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
+      doc.setTextColor(...SOFT);
+      doc.text('DISCLAIMER & TERMS OF USE (SUMMARY)', MARGIN_X, y);
+      y += 8;
+      // Shortened, abstracted version of the 11-section Terms. Refers users
+      // to the full Terms inside the simulator for the binding text.
+      const disclaimer = (
+        'The Tool is for educational and informational use only — not financial, ' +
+        'investment, tax, legal, or accounting advice. Use does not create an ' +
+        'advisory or fiduciary relationship. All results are hypothetical, based ' +
+        'on user inputs, assumptions, and historical data; future outcomes are not ' +
+        'guaranteed. The Tool is provided "as is" without warranties of accuracy ' +
+        'or completeness and may be in beta. To the fullest extent permitted by ' +
+        'law, the provider accepts no liability for losses arising from your use of ' +
+        'or reliance on the Tool. By using the Tool you acknowledge and agree to ' +
+        'the full Disclaimer & Terms of Use available within the simulator.'
+      );
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
       doc.setTextColor(...SOFT);
       const dLines = doc.splitTextToSize(disclaimer, CONTENT_W);
       for (const line of dLines) {
         doc.text(line, MARGIN_X, y);
-        y += 9;
+        y += 8.5;
       }
       // Page footer (fixed at the bottom margin, not relative to y)
       doc.setFont('courier', 'normal');
@@ -2655,6 +2697,11 @@ function resetToDefaults() {
   INPUT_STATE.distribution_strategy   = DEFAULTS.distribution_strategy;
   INPUT_STATE.minimum_withdrawal_annual = DEFAULTS.minimum_withdrawal_annual;
   INPUT_STATE.strategy_params         = { ...DEFAULTS.strategy_params };
+
+  // Terms of Use acceptance — clear on reset so the user has to re-acknowledge.
+  INPUT_STATE.terms_accepted_at = null;
+  const discCb = document.getElementById('disclaimer-check');
+  if (discCb) discCb.checked = false;
 
   // Re-render
   renderAllocationRows();
