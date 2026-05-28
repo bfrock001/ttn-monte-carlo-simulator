@@ -6,7 +6,7 @@ Runs 10,000 bootstrapped historical scenarios in a Web Worker, presents the
 results as fan charts, success-rate cards, percentile tables, and an income
 variability report.
 
-**Live site**: _(add Render URL once deployed)_
+**Live site**: <https://ttn-monte-carlo-simulator.onrender.com>
 
 ---
 
