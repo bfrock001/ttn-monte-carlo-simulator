@@ -1123,6 +1123,13 @@ function attachCurrencyHandlers(input, onCommit) {
     // Strip non-digit chars while typing (but leave the field as the user sees)
     const cleaned = input.value.replace(/[^0-9]/g, '');
     input.value = cleaned;
+    // Commit on every keystroke. This guards against any edge case where blur
+    // doesn't fire (touch, focus races, autofill, programmatic value changes,
+    // tab-then-immediate-click on Run, etc.) — state stays in sync with the
+    // digits the user actually sees in the field. Blur still does the display
+    // reformatting (e.g., "$30,000").
+    const raw = cleaned ? parseInt(cleaned, 10) || 0 : 0;
+    onCommit(raw);
   });
   input.addEventListener('blur', () => {
     const raw = parseCurrency(input.value);
