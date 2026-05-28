@@ -1378,6 +1378,8 @@ function bindInputEvents() {
   document.getElementById('disclaimer-check')?.addEventListener('change', refreshRunButtonState);
   document.getElementById('run-sim')?.addEventListener('click', runSimulationFromInputs);
   document.getElementById('reset-defaults')?.addEventListener('click', resetToDefaults);
+  // Mirrored Reset button at the top of the input panel (QA / quick-access).
+  document.getElementById('reset-defaults-top')?.addEventListener('click', resetToDefaults);
 }
 
 /* -----------------------------------------------------------
